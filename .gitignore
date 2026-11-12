@@ -19,3 +19,6 @@ secrets.*
 .DS_Store
 Thumbs.db
 
+# Invalid benchmark run retained locally for diagnostics only
+/benchmark-results-20261027-invalid-firewall-attempt/
+
