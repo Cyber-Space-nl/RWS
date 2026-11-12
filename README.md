@@ -1,5 +1,7 @@
 # Rust WebServer (RWS)
 
+[![CI](https://github.com/Cyber-Space-nl/RWS/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Cyber-Space-nl/RWS/actions/workflows/ci.yml)
+
 RWS is an experimental event-driven Linux webserver written in Rust. The workspace contains two server binaries, a shared core library and a WebSocket load-testing tool.
 
 ## Benchmark snapshot
