@@ -9,6 +9,10 @@
 
 Install either `rws-simple` or `rws-comfy` as the active server. Their default configurations use the same ports, so do not run both simultaneously unless you change those ports.
 
+The locked workspace requires Rust 1.88 or newer; static-file containment requires Linux 5.6 or
+newer. These instructions install a system service; for a non-root local test use the README
+quickstart. Review [security limitations](docs/SECURITY_TESTING.md) before exposing a service.
+
 > **Naming change:** current packages, binaries, services, configuration directories, metrics and
 > the WebSocket endpoint use the `rws` prefix. Existing pre-rename installations are not migrated
 > automatically. Stop the previous service and carry over only reviewed configuration before
@@ -33,6 +37,11 @@ sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
 sudo systemctl enable --now rws-simple
 curl -i -H 'Host: example.test' http://127.0.0.1:8080/
 ```
+
+The installer leaves the service stopped and preserves an existing config. `--check` does not
+verify runtime access as user `rws`, port availability, PHP-FPM connectivity or certificate trust;
+inspect `systemctl status` and the journal after starting. The default example enables PHP-FPM;
+if it is not needed, set `php = false` in the site configuration.
 
 ## Comfy
 

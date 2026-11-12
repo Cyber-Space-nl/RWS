@@ -2,7 +2,40 @@
 
 [![CI](https://github.com/Cyber-Space-nl/RWS/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Cyber-Space-nl/RWS/actions/workflows/ci.yml)
 
-RWS is an experimental event-driven Linux webserver written in Rust. The workspace contains two server binaries, a shared core library and a WebSocket load-testing tool.
+RWS is an experimental event-driven Linux web server written in Rust. It serves static files and
+PHP-FPM applications, provides a native WebSocket echo endpoint, and offers an optional HTTP
+reverse proxy. It is an MVP for testing and measurement, not yet a drop-in replacement for Nginx
+or Apache.
+
+## Local quickstart
+
+On Linux with Rust 1.88 or newer, run the included loopback-only example without root privileges:
+
+```bash
+git clone https://github.com/Cyber-Space-nl/RWS.git
+cd RWS
+cargo run --locked -p rws-simple -- --config config.dev.wsl.toml
+```
+
+In another terminal:
+
+```bash
+curl -i -H 'Host: localhost' http://127.0.0.1:18080/
+curl -i http://127.0.0.1:19091/healthz
+```
+
+Stop the server with Ctrl+C. The example serves `examples/site`; it does not enable PHP or TLS.
+For systemd installation, see [Ubuntu installation](UBUNTU_INSTALL.md).
+
+## Documentation and platforms
+
+- [Architecture](docs/ARCHITECTURE.md), [security testing](docs/SECURITY_TESTING.md) and [benchmarking](docs/BENCHMARKING.md)
+- [Contributing](CONTRIBUTING.md), [security policy](SECURITY.md) and [changelog](CHANGELOG.md)
+- Linux is the deployment target; Ubuntu 24.04 on WSL2 and Linux GitHub Actions runners have been
+  used for builds and tests. Linux 5.6 or newer is required for contained static-file opening.
+  Windows workspace tests are useful for development but Windows deployment is not established.
+- The workflow in this tree checks the locked workspace with Rust 1.88 and runs the main checks on stable Rust.
+  A new dependency resolution may require a newer toolchain; use the committed lockfile.
 
 ## Benchmark snapshot
 
@@ -47,8 +80,6 @@ warnings and raw measurements.
 - **`rws-ws-load`** — development tool that creates concurrent WebSocket connections and messages to measure behavior, performance and stability. It is not a production service.
 - **`rws-bench`** — guarded native Linux HTTP/1.1 keep-alive scalability benchmark with
   resource checks, SSH monitoring, raw JSON and deterministic Markdown comparison reports.
-
-This is an MVP for correctness testing and performance measurement. It is not yet a drop-in replacement for Nginx or Apache.
 
 ## Implemented
 
@@ -96,13 +127,13 @@ This is an MVP for correctness testing and performance measurement. It is not ye
 - Metrics are counters/gauges only; latency histograms are still pending.
 - The 2 MB idle RSS figure is an optimization goal, not a hard limit or acceptance criterion.
 
-## Validation and deployment status
+## Historical validation and deployment
 
 The server build available at the time was deployed and validated on 27 October 2026 on the
 project VPS:
 
-- RWS is active on ports 80 and 443; Nginx remains isolated on benchmark port 18081.
-- The production site returns HTTP 200 and the benchmark file returns the expected 77-byte body.
+- RWS was active on ports 80 and 443; Nginx was isolated on benchmark port 18081.
+- The test site returned HTTP 200 and the benchmark file returned the expected 77-byte body.
 - The static cache is enabled with a 64 MiB total limit, 1 MiB per-file limit, 4,096 entries and
   a 1,000 ms revalidation interval.
 - HTTP and HTTPS use a listen backlog of 1,024.
@@ -113,11 +144,9 @@ project VPS:
   invalidations or service errors.
 - The current `rws-*` naming release has not been redeployed by this repository-only rename.
 
-The current release passed all 38 workspace tests and Clippy with warnings treated as errors on
-Windows. Linux validation built `rws-simple`, `rws-comfy`, `rws-ws-load` and `rws-bench` in release
-mode. The smoke test verified static HTTP `200`, unknown-host `421`, health, 20 WebSocket
-connections, 100 echoed messages with no errors, zero remaining open WebSockets and clean
-shutdown. The standalone Linux `rws-bench` binary was rebuilt and its checksum updated.
+These are historical observations, not a statement about the current server or a current release.
+Check the CI badge for the latest automated status; [security testing](docs/SECURITY_TESTING.md)
+describes the scope and limitations of local validation.
 
 The latest externally measured optimized-cache result, taken after the first four hot-path
 optimizations but before the final 5-10 deployment, was **57,927.69 requests/second** at four wrk
@@ -125,7 +154,7 @@ threads and 100 connections, with p50 1.70 ms and p99 2.31 ms. The comparable Ng
 41,588.59 requests/second, p50 2.33 ms and p99 4.02 ms. This is a measured result for that build,
 not yet a performance claim for the final deployed binary.
 
-## Ubuntu 24.04 quick start
+## Ubuntu 24.04 system installation
 
 For a more focused installation and operations guide, see `UBUNTU_INSTALL.md`.
 
@@ -152,6 +181,10 @@ sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
 sudo systemctl enable --now rws-simple
 ```
 
+`--check` validates TOML and loads configured TLS files; it does not prove that the service account
+can access them, that PHP-FPM is reachable, or that listeners can bind. Check the service logs
+after startup.
+
 Test the default example vhost:
 
 ```bash
@@ -161,12 +194,15 @@ curl -s http://127.0.0.1:9091/metrics
 sudo journalctl -u rws-simple -f
 ```
 
-To enable the PHP sample:
+To enable the PHP sample in an isolated test environment:
 
 ```bash
 sudo install -m 0644 examples/site/info.php /var/www/example.test/public/info.php
 curl -i -H 'Host: example.test' http://127.0.0.1:8080/info.php
 ```
+
+The sample exposes PHP configuration through `phpinfo()`; remove it after testing and do not
+expose it publicly.
 
 If Ubuntu uses a different PHP-FPM socket, find it and update `php_fpm`:
 
@@ -226,11 +262,10 @@ revalidate_after_ms = 1000
 ```
 
 Fresh cache hits do not access the filesystem. After `revalidate_after_ms`, one request validates
-the file while concurrent requests continue using the cached response. A changed or replaced file
-is therefore visible after at most the configured interval plus one metadata operation. Set the
-value to `0` for strict validation on every request.
+the file while concurrent requests can continue using the cached response. Filesystem delays or
+errors can affect when a change becomes visible. Set the value to `0` to validate on every request.
 
-The cache is split into 16 independently locked shards. A fresh hit returns the cached body,
+The cache is split into up to 16 independently locked shards. A fresh hit returns the cached body,
 content type and content length directly. Cache misses, filesystem work, PHP and proxy requests
 use the bounded slow-request semaphore; cached static hits do not consume those permits. Files
 larger than `max_file_bytes` are streamed asynchronously and counted as cache bypasses.
@@ -323,11 +358,16 @@ the server for CPU. Benchmark static HTTP, TLS, PHP and WebSockets separately.
 
 ## Upgrade and rollback
 
-The installers back up an existing binary and unit with a timestamp. They preserve existing configuration. To roll back, stop the service, restore the selected `.backup.TIMESTAMP` files and restart.
+The installers back up an existing binary and unit with a timestamp and preserve existing
+configuration. They overwrite the logrotate file without backing it up. Before upgrading, back up
+configuration, logrotate settings and site data separately. To roll back, stop the service, restore
+the matching binary and unit backups, reload systemd and restart:
 
 ```bash
 sudo systemctl stop rws-simple
 sudo cp -a /usr/local/bin/rws-simple.backup.TIMESTAMP /usr/local/bin/rws-simple
+sudo cp -a /etc/systemd/system/rws-simple.service.backup.TIMESTAMP /etc/systemd/system/rws-simple.service
+sudo systemctl daemon-reload
 sudo systemctl start rws-simple
 ```
 

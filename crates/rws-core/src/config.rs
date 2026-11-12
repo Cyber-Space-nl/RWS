@@ -293,10 +293,10 @@ impl Config {
                 }
             }
         }
-        if let Some(tls) = &self.tls {
-            if !tls.cert_file.is_file() || !tls.key_file.is_file() {
-                bail!("TLS certificate or key file does not exist");
-            }
+        if let Some(tls) = &self.tls
+            && (!tls.cert_file.is_file() || !tls.key_file.is_file())
+        {
+            bail!("TLS certificate or key file does not exist");
         }
         #[cfg(feature = "comfy")]
         if self.adaptive.enabled

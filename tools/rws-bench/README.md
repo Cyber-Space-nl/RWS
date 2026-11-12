@@ -10,7 +10,7 @@ built binary: the bundled distribution may predate newer options.
 
 ## Build and install
 
-Ubuntu 24.04 with Rust 1.85 or newer:
+Ubuntu 24.04 with Rust 1.88 or newer:
 
 ```bash
 cargo build --locked --release -p rws-bench
@@ -23,7 +23,9 @@ uses the system `ssh` client and read-only Linux commands (`ps`, `/proc`, `ss`, 
 available). Authentication remains in the user's SSH agent/config; passwords are never stored.
 
 A validated stripped x86-64 Linux release is included at
-`dist/rws-bench-x86_64-linux`; verify it with `sha256sum -c dist/SHA256SUMS`.
+`dist/rws-bench-x86_64-linux`; from the repository root verify it with
+`(cd tools/rws-bench/dist && sha256sum -c SHA256SUMS)`. It is a historical artifact and may not
+include the current source's options; build the current tool for the workflows in the guide.
 
 ## Safety model
 
