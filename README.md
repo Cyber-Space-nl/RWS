@@ -304,3 +304,7 @@ cargo tree -p rsw-comfy -e features
 
 Build each release package separately when comparing dependencies and binary sizes so Cargo feature unification cannot distort the comparison.
 
+## License
+
+RWS is available under the [MIT License](LICENSE).
+
