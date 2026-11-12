@@ -1,6 +1,6 @@
-# Rust WebServer (RSW)
+# Rust WebServer (RWS)
 
-RSW is an experimental event-driven Linux webserver written in Rust. The workspace contains two server binaries, a shared core library and a WebSocket load-testing tool.
+RWS is an experimental event-driven Linux webserver written in Rust. The workspace contains two server binaries, a shared core library and a WebSocket load-testing tool.
 
 ## Benchmark snapshot
 
@@ -82,7 +82,7 @@ This is an MVP for correctness testing and performance measurement. It is not ye
 
 The optimized `rsw-simple` build was deployed and validated on 27 October 2026 on the project VPS:
 
-- RSW is active on ports 80 and 443; Nginx remains isolated on benchmark port 18081.
+- RWS is active on ports 80 and 443; Nginx remains isolated on benchmark port 18081.
 - The production site returns HTTP 200 and the benchmark file returns the expected 77-byte body.
 - The static cache is enabled with a 64 MiB total limit, 1 MiB per-file limit, 4,096 entries and
   a 1,000 ms revalidation interval.
@@ -178,7 +178,7 @@ sudo /usr/local/bin/rsw-simple --config /etc/rsw-simple/config.toml --check
 sudo systemctl restart rsw-simple
 ```
 
-RSW does not issue certificates in this MVP. Use an external ACME client and ensure the `rsw` service account can read the deployed key through an appropriately restricted group or copied file.
+RWS does not issue certificates in this MVP. Use an external ACME client and ensure the `rsw` service account can read the deployed key through an appropriately restricted group or copied file.
 
 ## Configuration
 
@@ -291,7 +291,7 @@ without access logs, install `wrk`, and run:
 ./scripts/benchmark-http.sh http://127.0.0.1/robots.txt bench.local
 ```
 
-The reproducible RSW/Nginx procedure, equivalence checks, cache toggles and deploy/rollback
+The reproducible RWS/Nginx procedure, equivalence checks, cache toggles and deploy/rollback
 commands are in `BENCHMARK_STATIC.md`.
 
 Run the load generator on a separate machine for publishable results so it does not compete with
