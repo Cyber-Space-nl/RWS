@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "label": "websocket-smoke",
+  "target": "ws://127.0.0.1:18080/_rsw/ws",
+  "host_header": "localhost",
+  "started_unix_ms": 1793112068676,
+  "settings": {
+    "connections": 20,
+    "active_percent": 20.0,
+    "idle_duration_secs": 2,
+    "active_duration_secs": 2,
+    "offered_rps": 20,
+    "connect_rate": 200,
+    "request_timeout_ms": 2000,
+    "source_ips": []
+  },
+  "generator": {
+    "os": "windows",
+    "logical_cpus": 24,
+    "fd_soft_limit": null,
+    "ephemeral_port_capacity": null
+  },
+  "summary": {
+    "connections_requested": 20,
+    "connections_opened": 20,
+    "connections_failed": 0,
+    "unexpected_disconnects": 0,
+    "reconnects": 0,
+    "requests_sent": 40,
+    "responses_ok": 40,
+    "responses_failed": 0,
+    "socket_errors": 0,
+    "elapsed_ms": 2173,
+    "achieved_rps": 20.0,
+    "connection_latency": {
+      "samples": 20,
+      "min_us": 565,
+      "p50_us": 847,
+      "p95_us": 2481,
+      "p99_us": 2573,
+      "max_us": 2573,
+      "mean_us": 1012.25
+    },
+    "request_latency": {
+      "samples": 40,
+      "min_us": 268,
+      "p50_us": 342,
+      "p95_us": 443,
+      "p99_us": 463,
+      "max_us": 463,
+      "mean_us": 356.375
+    },
+    "errors": {}
+  },
+  "raw_connection_latency": {
+    "buckets": [
+      {
+        "value_us": 565,
+        "count": 1
+      },
+      {
+        "value_us": 677,
+        "count": 1
+      },
+      {
+        "value_us": 696,
+        "count": 1
+      },
+      {
+        "value_us": 778,
+        "count": 1
+      },
+      {
+        "value_us": 795,
+        "count": 1
+      },
+      {
+        "value_us": 821,
+        "count": 1
+      },
+      {
+        "value_us": 824,
+        "count": 1
+      },
+      {
+        "value_us": 833,
+        "count": 1
+      },
+      {
+        "value_us": 839,
+        "count": 1
+      },
+      {
+        "value_us": 847,
+        "count": 1
+      },
+      {
+        "value_us": 873,
+        "count": 1
+      },
+      {
+        "value_us": 900,
+        "count": 1
+      },
+      {
+        "value_us": 927,
+        "count": 2
+      },
+      {
+        "value_us": 939,
+        "count": 1
+      },
+      {
+        "value_us": 974,
+        "count": 1
+      },
+      {
+        "value_us": 975,
+        "count": 1
+      },
+      {
+        "value_us": 1001,
+        "count": 1
+      },
+      {
+        "value_us": 2481,
+        "count": 1
+      },
+      {
+        "value_us": 2573,
+        "count": 1
+      }
+    ]
+  },
+  "raw_request_latency": {
+    "buckets": [
+      {
+        "value_us": 268,
+        "count": 1
+      },
+      {
+        "value_us": 291,
+        "count": 1
+      },
+      {
+        "value_us": 299,
+        "count": 1
+      },
+      {
+        "value_us": 302,
+        "count": 1
+      },
+      {
+        "value_us": 305,
+        "count": 1
+      },
+      {
+        "value_us": 314,
+        "count": 1
+      },
+      {
+        "value_us": 316,
+        "count": 1
+      },
+      {
+        "value_us": 319,
+        "count": 1
+      },
+      {
+        "value_us": 322,
+        "count": 1
+      },
+      {
+        "value_us": 323,
+        "count": 1
+      },
+      {
+        "value_us": 327,
+        "count": 1
+      },
+      {
+        "value_us": 328,
+        "count": 1
+      },
+      {
+        "value_us": 330,
+        "count": 1
+      },
+      {
+        "value_us": 332,
+        "count": 1
+      },
+      {
+        "value_us": 333,
+        "count": 2
+      },
+      {
+        "value_us": 335,
+        "count": 1
+      },
+      {
+        "value_us": 340,
+        "count": 1
+      },
+      {
+        "value_us": 342,
+        "count": 2
+      },
+      {
+        "value_us": 345,
+        "count": 2
+      },
+      {
+        "value_us": 347,
+        "count": 1
+      },
+      {
+        "value_us": 350,
+        "count": 1
+      },
+      {
+        "value_us": 354,
+        "count": 1
+      },
+      {
+        "value_us": 361,
+        "count": 1
+      },
+      {
+        "value_us": 363,
+        "count": 1
+      },
+      {
+        "value_us": 367,
+        "count": 1
+      },
+      {
+        "value_us": 375,
+        "count": 1
+      },
+      {
+        "value_us": 378,
+        "count": 1
+      },
+      {
+        "value_us": 399,
+        "count": 1
+      },
+      {
+        "value_us": 401,
+        "count": 1
+      },
+      {
+        "value_us": 406,
+        "count": 1
+      },
+      {
+        "value_us": 414,
+        "count": 1
+      },
+      {
+        "value_us": 426,
+        "count": 2
+      },
+      {
+        "value_us": 442,
+        "count": 1
+      },
+      {
+        "value_us": 443,
+        "count": 1
+      },
+      {
+        "value_us": 449,
+        "count": 1
+      },
+      {
+        "value_us": 463,
+        "count": 1
+      }
+    ]
+  },
+  "server_samples": [],
+  "warnings": []
+}

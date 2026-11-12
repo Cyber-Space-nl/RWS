@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/rsw-core",
+    "crates/rsw-simple",
+    "crates/rsw-comfy",
+    "tools/rsw-ws-load",
+    "tools/rws-bench",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+

@@ -1,0 +1,25 @@
+[server]
+listen = "127.0.0.1:18080"
+https_listen = "127.0.0.1:18443"
+max_in_flight_requests = 64
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+shutdown_grace_period_s = 2
+json_logs = false
+
+[metrics]
+listen = "127.0.0.1:19091"
+
+[websocket]
+path = "/_rsw/ws"
+outbound_queue_messages = 8
+outbound_queue_bytes = 65536
+scheduler_quantum_bytes = 4096
+per_turn_messages = 4
+
+[[sites]]
+host = "localhost"
+mode = "static"
+root = "examples/site"
+index = "index.html"
+php = false

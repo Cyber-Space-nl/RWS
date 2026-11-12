@@ -1,0 +1,55 @@
+[server]
+listen = "0.0.0.0:8080"
+https_listen = "0.0.0.0:8443"
+max_in_flight_requests = 2048
+listen_backlog = 2048
+max_body_bytes = 16777216
+request_timeout_ms = 30000
+shutdown_grace_period_s = 20
+json_logs = true
+
+[metrics]
+listen = "127.0.0.1:9091"
+
+[static_cache]
+enabled = true
+max_total_bytes = 134217728
+max_file_bytes = 2097152
+max_entries = 8192
+revalidate_after_ms = 1000
+
+[websocket]
+path = "/_rsw/ws"
+outbound_queue_messages = 128
+outbound_queue_bytes = 524288
+scheduler_quantum_bytes = 16384
+per_turn_messages = 32
+
+[adaptive]
+enabled = false
+interval_ms = 500
+min_quantum_bytes = 4096
+max_quantum_bytes = 131072
+queue_high_watermark = 128
+
+# Uncomment after installing a certificate.
+# [tls]
+# cert_file = "/etc/rsw-comfy/tls/fullchain.pem"
+# key_file = "/etc/rsw-comfy/tls/privkey.pem"
+
+[[sites]]
+host = "example.test"
+mode = "static"
+root = "/var/www/example.test/public"
+index = "index.html"
+php = true
+php_fpm = "unix:/run/php/php8.3-fpm.sock"
+access_log = "/var/log/rsw-comfy/example.test.access.log"
+error_log = "/var/log/rsw-comfy/example.test.error.log"
+
+# Comfy-only reverse proxy example:
+# [[sites]]
+# host = "app.example.test"
+# mode = "proxy"
+# upstream = "http://127.0.0.1:3000"
+

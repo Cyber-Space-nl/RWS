@@ -1,0 +1,423 @@
+{
+  "schema_version": 1,
+  "label": "local-smoke",
+  "target": "http://127.0.0.1:18080/index.html",
+  "host_header": "localhost",
+  "started_unix_ms": 1793111722851,
+  "settings": {
+    "connections": 20,
+    "active_percent": 50.0,
+    "idle_duration_secs": 2,
+    "active_duration_secs": 2,
+    "offered_rps": 40,
+    "connect_rate": 200,
+    "request_timeout_ms": 2000,
+    "source_ips": []
+  },
+  "generator": {
+    "os": "windows",
+    "logical_cpus": 24,
+    "fd_soft_limit": null,
+    "ephemeral_port_capacity": null
+  },
+  "summary": {
+    "connections_requested": 20,
+    "connections_opened": 20,
+    "connections_failed": 0,
+    "unexpected_disconnects": 0,
+    "reconnects": 0,
+    "requests_sent": 80,
+    "responses_ok": 80,
+    "responses_failed": 0,
+    "socket_errors": 0,
+    "elapsed_ms": 2157,
+    "achieved_rps": 40.0,
+    "connection_latency": {
+      "samples": 20,
+      "min_us": 243,
+      "p50_us": 288,
+      "p95_us": 1714,
+      "p99_us": 1856,
+      "max_us": 1856,
+      "mean_us": 434.70000000000005
+    },
+    "request_latency": {
+      "samples": 80,
+      "min_us": 615,
+      "p50_us": 840,
+      "p95_us": 964,
+      "p99_us": 1131,
+      "max_us": 1131,
+      "mean_us": 841.5374999999997
+    },
+    "errors": {}
+  },
+  "raw_connection_latency": {
+    "buckets": [
+      {
+        "value_us": 243,
+        "count": 1
+      },
+      {
+        "value_us": 248,
+        "count": 1
+      },
+      {
+        "value_us": 255,
+        "count": 1
+      },
+      {
+        "value_us": 256,
+        "count": 1
+      },
+      {
+        "value_us": 257,
+        "count": 1
+      },
+      {
+        "value_us": 265,
+        "count": 1
+      },
+      {
+        "value_us": 278,
+        "count": 1
+      },
+      {
+        "value_us": 285,
+        "count": 1
+      },
+      {
+        "value_us": 287,
+        "count": 1
+      },
+      {
+        "value_us": 288,
+        "count": 1
+      },
+      {
+        "value_us": 293,
+        "count": 3
+      },
+      {
+        "value_us": 297,
+        "count": 1
+      },
+      {
+        "value_us": 300,
+        "count": 1
+      },
+      {
+        "value_us": 323,
+        "count": 1
+      },
+      {
+        "value_us": 328,
+        "count": 1
+      },
+      {
+        "value_us": 335,
+        "count": 1
+      },
+      {
+        "value_us": 1714,
+        "count": 1
+      },
+      {
+        "value_us": 1856,
+        "count": 1
+      }
+    ]
+  },
+  "raw_request_latency": {
+    "buckets": [
+      {
+        "value_us": 615,
+        "count": 1
+      },
+      {
+        "value_us": 618,
+        "count": 1
+      },
+      {
+        "value_us": 648,
+        "count": 1
+      },
+      {
+        "value_us": 679,
+        "count": 1
+      },
+      {
+        "value_us": 684,
+        "count": 1
+      },
+      {
+        "value_us": 687,
+        "count": 1
+      },
+      {
+        "value_us": 712,
+        "count": 1
+      },
+      {
+        "value_us": 713,
+        "count": 1
+      },
+      {
+        "value_us": 715,
+        "count": 1
+      },
+      {
+        "value_us": 719,
+        "count": 1
+      },
+      {
+        "value_us": 725,
+        "count": 3
+      },
+      {
+        "value_us": 741,
+        "count": 1
+      },
+      {
+        "value_us": 757,
+        "count": 1
+      },
+      {
+        "value_us": 758,
+        "count": 1
+      },
+      {
+        "value_us": 760,
+        "count": 1
+      },
+      {
+        "value_us": 765,
+        "count": 1
+      },
+      {
+        "value_us": 782,
+        "count": 1
+      },
+      {
+        "value_us": 785,
+        "count": 1
+      },
+      {
+        "value_us": 791,
+        "count": 1
+      },
+      {
+        "value_us": 801,
+        "count": 1
+      },
+      {
+        "value_us": 802,
+        "count": 1
+      },
+      {
+        "value_us": 803,
+        "count": 1
+      },
+      {
+        "value_us": 806,
+        "count": 2
+      },
+      {
+        "value_us": 810,
+        "count": 1
+      },
+      {
+        "value_us": 812,
+        "count": 1
+      },
+      {
+        "value_us": 815,
+        "count": 2
+      },
+      {
+        "value_us": 822,
+        "count": 1
+      },
+      {
+        "value_us": 824,
+        "count": 1
+      },
+      {
+        "value_us": 825,
+        "count": 1
+      },
+      {
+        "value_us": 832,
+        "count": 1
+      },
+      {
+        "value_us": 833,
+        "count": 2
+      },
+      {
+        "value_us": 835,
+        "count": 1
+      },
+      {
+        "value_us": 837,
+        "count": 1
+      },
+      {
+        "value_us": 840,
+        "count": 2
+      },
+      {
+        "value_us": 843,
+        "count": 1
+      },
+      {
+        "value_us": 846,
+        "count": 1
+      },
+      {
+        "value_us": 847,
+        "count": 1
+      },
+      {
+        "value_us": 853,
+        "count": 1
+      },
+      {
+        "value_us": 863,
+        "count": 1
+      },
+      {
+        "value_us": 866,
+        "count": 1
+      },
+      {
+        "value_us": 872,
+        "count": 1
+      },
+      {
+        "value_us": 876,
+        "count": 1
+      },
+      {
+        "value_us": 877,
+        "count": 1
+      },
+      {
+        "value_us": 879,
+        "count": 1
+      },
+      {
+        "value_us": 881,
+        "count": 1
+      },
+      {
+        "value_us": 882,
+        "count": 1
+      },
+      {
+        "value_us": 886,
+        "count": 1
+      },
+      {
+        "value_us": 888,
+        "count": 1
+      },
+      {
+        "value_us": 890,
+        "count": 2
+      },
+      {
+        "value_us": 893,
+        "count": 1
+      },
+      {
+        "value_us": 899,
+        "count": 1
+      },
+      {
+        "value_us": 900,
+        "count": 1
+      },
+      {
+        "value_us": 902,
+        "count": 1
+      },
+      {
+        "value_us": 908,
+        "count": 1
+      },
+      {
+        "value_us": 914,
+        "count": 1
+      },
+      {
+        "value_us": 915,
+        "count": 2
+      },
+      {
+        "value_us": 935,
+        "count": 1
+      },
+      {
+        "value_us": 939,
+        "count": 1
+      },
+      {
+        "value_us": 940,
+        "count": 1
+      },
+      {
+        "value_us": 945,
+        "count": 1
+      },
+      {
+        "value_us": 947,
+        "count": 1
+      },
+      {
+        "value_us": 949,
+        "count": 1
+      },
+      {
+        "value_us": 952,
+        "count": 1
+      },
+      {
+        "value_us": 954,
+        "count": 1
+      },
+      {
+        "value_us": 955,
+        "count": 1
+      },
+      {
+        "value_us": 957,
+        "count": 1
+      },
+      {
+        "value_us": 959,
+        "count": 1
+      },
+      {
+        "value_us": 964,
+        "count": 1
+      },
+      {
+        "value_us": 970,
+        "count": 1
+      },
+      {
+        "value_us": 973,
+        "count": 2
+      },
+      {
+        "value_us": 1131,
+        "count": 1
+      }
+    ]
+  },
+  "server_samples": [],
+  "warnings": [
+    "The load generator is not Linux; Linux-specific fd, TCP and epoll checks are unavailable."
+  ]
+}

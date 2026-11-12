@@ -1,0 +1,10 @@
+/var/log/rsw-simple/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su rsw rsw
+}

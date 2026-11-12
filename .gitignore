@@ -1,0 +1,21 @@
+/target/
+*.log
+*.pid
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.*
+secrets.*
+
+# Editor and OS state
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+

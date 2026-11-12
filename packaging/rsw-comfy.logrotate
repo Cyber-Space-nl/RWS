@@ -1,0 +1,10 @@
+/var/log/rsw-comfy/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su rsw rsw
+}

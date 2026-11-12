@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RWS geheugenstabiliteit — 20 miljoen requests</title>
+  <style>
+    :root{font-family:Inter,system-ui,sans-serif;color-scheme:light dark;--green:#22c55e;--blue:#3b82f6;--orange:#f97316;--grid:color-mix(in srgb,currentColor 18%,transparent)}
+    body{max-width:1100px;margin:0 auto;padding:28px;line-height:1.5} h1{margin-bottom:4px}.sub{color:#64748b;margin-top:0}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{padding:16px;border:1px solid #94a3b8;border-radius:8px}.value{font-size:1.65rem;font-weight:700}.ok{color:var(--green)}.warning{border-left:4px solid var(--orange);padding:10px 14px;background:color-mix(in srgb,var(--orange) 10%,transparent)}figure{margin:30px 0}svg{width:100%;height:340px;border:1px solid #94a3b8;border-radius:8px;background:color-mix(in srgb,currentColor 3%,transparent)}.grid{stroke:var(--grid);stroke-width:1}.axis{fill:currentColor;font-size:12px}.line{fill:none;stroke:var(--green);stroke-width:4}.point{fill:var(--green)}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:8px;border:1px solid #94a3b8;text-align:right}th:first-child,td:first-child{text-align:left}th{background:#334155;color:#fff}@media(max-width:700px){.cards{grid-template-columns:1fr}body{padding:16px}}
+  </style>
+</head>
+<body>
+  <h1>RWS geheugenstabiliteit</h1>
+  <p class="sub">Cold-startdiagnose op 27 oktober 2026 — test-VPS 94.237.44.223, één vCPU.</p>
+  <div class="cards">
+    <div class="card"><div>Cold RSS</div><div class="value">6,55 MiB</div></div>
+    <div class="card"><div>RSS na 20 miljoen</div><div class="value ok">11,11 MiB</div></div>
+    <div class="card"><div>Groei 15M → 20M</div><div class="value ok">4 KiB</div></div>
+  </div>
+
+  <h2>Conclusie</h2>
+  <p>Het statische keep-alive-cachepad vertoont geen voortdurend groeiend geheugengebruik. Na de initiële opwarming vormt zich rond 11,1 MiB RSS een duidelijk plateau. De eerdere 255 MiB kan daarom niet worden verklaard door het aantal statische requests alleen.</p>
+  <p>Een aanvullende externe test met telkens 1.000 nieuwe verbindingen verhoogde RSS stapsgewijs tot 40,3 MiB en vlakte vervolgens af; na het verdwijnen van tijdelijke workerthreads zakte RSS naar 36,7 MiB. Dit past bij pools/allocatorretentie door connection churn, maar reproduceert de eerdere 255 MiB nog niet.</p>
+
+  <figure>
+    <h2>RSS versus cumulatieve requests</h2>
+    <svg id="requests" role="img" aria-label="RWS RSS bij nul, vijf, tien, vijftien en twintig miljoen requests"></svg>
+  </figure>
+  <table>
+    <thead><tr><th>Meetpunt</th><th>RSS</th><th>PSS</th><th>Anonieme heap</th><th>Fouten</th></tr></thead>
+    <tbody>
+      <tr><td>Cold</td><td>6,55 MiB</td><td>4,59 MiB</td><td>0,59 MiB</td><td>0</td></tr>
+      <tr><td>5 miljoen</td><td>10,35 MiB</td><td>8,27 MiB</td><td>3,39 MiB</td><td>0</td></tr>
+      <tr><td>10 miljoen</td><td>11,08 MiB</td><td>9,00 MiB</td><td>3,55 MiB</td><td>0</td></tr>
+      <tr><td>15 miljoen</td><td>11,10 MiB</td><td>9,03 MiB</td><td>3,58 MiB</td><td>0</td></tr>
+      <tr><td>20 miljoen</td><td>11,11 MiB</td><td>9,03 MiB</td><td>3,58 MiB</td><td>0</td></tr>
+    </tbody>
+  </table>
+
+  <figure>
+    <h2>RSS bij connection churn</h2>
+    <svg id="churn" role="img" aria-label="RWS RSS over herhaalde cycli met duizend nieuwe externe verbindingen"></svg>
+  </figure>
+  <p class="warning"><strong>Afbakening:</strong> de 20-miljoenmeting gebruikt 100 lokale keep-aliveverbindingen en is geschikt voor lekdetectie op het statische cachepad, niet voor throughputvergelijkingen. PHP, TLS, WebSockets en honderdduizenden idle sockets zijn hiermee niet vrijgepleit.</p>
+  <script>
+    const NS="http://www.w3.org/2000/svg";
+    function add(svg,name,attrs,text){const n=document.createElementNS(NS,name);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);if(text)n.textContent=text;svg.appendChild(n);return n}
+    function lineChart(id,rows,xLabel){const svg=document.getElementById(id),w=1000,h=340,m={l:70,r:28,t:24,b:55},pw=w-m.l-m.r,ph=h-m.t-m.b;svg.setAttribute("viewBox",`0 0 ${w} ${h}`);const xmax=Math.max(...rows.map(r=>r.x)),ymax=Math.ceil(Math.max(...rows.map(r=>r.y))/10)*10||10,x=x=>m.l+(x/xmax)*pw,y=y=>m.t+ph-(y/ymax)*ph;for(let i=0;i<=5;i++){const yy=m.t+ph-i*ph/5,value=ymax*i/5;add(svg,"line",{x1:m.l,x2:w-m.r,y1:yy,y2:yy,class:"grid"});add(svg,"text",{x:m.l-10,y:yy+4,"text-anchor":"end",class:"axis"},value.toFixed(0))}rows.forEach(r=>add(svg,"text",{x:x(r.x),y:h-25,"text-anchor":"middle",class:"axis"},r.label));add(svg,"text",{x:16,y:m.t+ph/2,transform:`rotate(-90 16 ${m.t+ph/2})`,"text-anchor":"middle",class:"axis"},"RSS (MiB)");add(svg,"text",{x:m.l+pw/2,y:h-5,"text-anchor":"middle",class:"axis"},xLabel);add(svg,"polyline",{points:rows.map(r=>`${x(r.x)},${y(r.y)}`).join(" "),class:"line"});rows.forEach(r=>{const p=add(svg,"circle",{cx:x(r.x),cy:y(r.y),r:5,class:"point"});add(p,"title",{},`${r.label}: ${r.y.toFixed(2)} MiB`)})}
+    lineChart("requests",[{x:0,y:6.55,label:"0"},{x:5,y:10.35,label:"5M"},{x:10,y:11.08,label:"10M"},{x:15,y:11.10,label:"15M"},{x:20,y:11.11,label:"20M"}],"Cumulatieve requests");
+    lineChart("churn",[{x:0,y:26.69,label:"start"},{x:1,y:32.91,label:"1"},{x:2,y:34.67,label:"2"},{x:3,y:35.22,label:"3"},{x:4,y:35.49,label:"4"},{x:5,y:35.60,label:"5"},{x:6,y:35.66,label:"6"},{x:7,y:35.70,label:"7"},{x:9,y:39.41,label:"9"},{x:10,y:40.01,label:"10"},{x:11,y:40.21,label:"11"},{x:12,y:40.31,label:"12"}],"Geldige cycli van 1.000 nieuwe verbindingen");
+  </script>
+</body>
+</html>

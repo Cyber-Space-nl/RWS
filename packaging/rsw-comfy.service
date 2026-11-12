@@ -1,0 +1,34 @@
+[Unit]
+Description=Rust WebServer Comfy
+Documentation=file:/usr/share/doc/rsw-comfy/README.md
+After=network-online.target php8.3-fpm.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rsw
+Group=rsw
+ExecStart=/usr/local/bin/rsw-comfy --config /etc/rsw-comfy/config.toml
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=25s
+LimitNOFILE=262144
+LogsDirectory=rsw-comfy
+LogsDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadOnlyPaths=/var/www
+
+[Install]
+WantedBy=multi-user.target
+
