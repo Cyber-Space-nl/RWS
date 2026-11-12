@@ -1434,6 +1434,7 @@ version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "rws-core",
+ "tempfile",
  "tokio",
 ]
 
@@ -1453,6 +1454,7 @@ dependencies = [
  "percent-encoding",
  "reqwest",
  "rustix",
+ "rustls",
  "serde",
  "socket2",
  "tempfile",

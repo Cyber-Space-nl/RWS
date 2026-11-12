@@ -8,7 +8,9 @@ Run `cargo test --locked --workspace` on Linux. Tests cover encoded path travers
 escaping the site root, replacement of a file with a symlink after it was opened, malformed HTTP/1
 headers on a socket, an HTTP/1 header deadline, oversized and slow proxy bodies, filtering of
 client forwarding headers and connection-nominated headers, FastCGI wire limits, static cache limits and changes,
-and scheduler queue limits and slow-writer isolation. Some tests require the `comfy` feature,
+and scheduler queue limits and slow-writer isolation. A Linux integration test generates a temporary
+certificate and checks Comfy `--check` and certificate-verified HTTPS startup; it requires
+`openssl` and `curl`. Some tests require the `comfy` feature,
 which is enabled by the workspace test command. Linux-specific tests are not run on Windows.
 
 `cargo audit` checks the lockfile against RustSec advisories. Its findings can change independently

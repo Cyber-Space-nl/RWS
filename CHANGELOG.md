@@ -21,5 +21,7 @@ Notable changes are recorded here. Dates are added when releases are published.
 - Client-provided forwarding headers are removed by the Comfy proxy. PHP and proxy request and
   response limits apply per request and may require configuration changes for large workloads.
 - The workspace minimum Rust version is 1.88 for the current lockfile.
+- Comfy explicitly selects the server's Rustls provider when none is installed, avoiding a TLS
+  startup panic when both AWS-LC and ring features are enabled.
 
 Historical benchmark reports retain their original measurements and methods.

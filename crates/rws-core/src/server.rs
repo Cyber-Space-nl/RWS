@@ -58,6 +58,7 @@ struct AppState {
 }
 
 pub async fn serve(config: Config) -> Result<()> {
+    crate::tls::ensure_crypto_provider();
     let sites = build_sites(&config)?;
     let config = Arc::new(config);
     let metrics = Arc::new(Metrics::default());

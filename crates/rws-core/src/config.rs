@@ -315,6 +315,7 @@ impl Config {
 
     pub async fn validate_tls(&self) -> Result<()> {
         if let Some(tls) = &self.tls {
+            crate::tls::ensure_crypto_provider();
             axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert_file, &tls.key_file)
                 .await
                 .context("failed to load TLS certificate/key")?;

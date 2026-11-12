@@ -6,6 +6,7 @@ mod scheduler;
 mod server;
 mod site_log;
 mod static_cache;
+mod tls;
 
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;

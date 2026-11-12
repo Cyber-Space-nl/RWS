@@ -12,7 +12,8 @@ instead of a public issue. For significant changes, opening an issue first can h
 
 ## Develop
 
-Use Linux and Rust 1.88 or later. Clone the repository and run from its root:
+Use Linux and Rust 1.88 or later. The Linux Comfy TLS integration test also requires `openssl` and
+`curl` on `PATH`. Clone the repository and run from its root:
 
 ```bash
 git clone https://github.com/Cyber-Space-nl/RWS.git
