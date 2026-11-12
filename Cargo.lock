@@ -1448,6 +1448,7 @@ dependencies = [
  "fastcgi-client",
  "futures-util",
  "http",
+ "hyper-util",
  "mime_guess",
  "percent-encoding",
  "reqwest",

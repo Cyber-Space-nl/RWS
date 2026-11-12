@@ -13,21 +13,23 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{any, get},
-    serve::ListenerExt,
 };
 use fastcgi_client::{Client, Params, Request as FastCgiRequest, Response as FastCgiResponse, io};
 use futures_util::{SinkExt, StreamExt};
+use hyper_util::rt::TokioTimer;
 use percent_encoding::percent_decode_str;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     borrow::Cow,
     collections::HashMap,
     path::{Component, Path, PathBuf},
+    pin::Pin,
     sync::{Arc, atomic::Ordering},
+    task::{Context as TaskContext, Poll},
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{Semaphore, watch},
 };
@@ -87,7 +89,7 @@ pub async fn serve(config: Config) -> Result<()> {
         .route("/metrics", get(metrics_handler))
         .with_state(state.clone());
 
-    let http_listener = bind_listener(config.server.listen, config.server.listen_backlog)
+    let http_listener = bind_std_listener(config.server.listen, config.server.listen_backlog)
         .with_context(|| format!("failed to bind HTTP listener {}", config.server.listen))?;
     let metrics_listener = bind_listener(config.metrics.listen, 128)
         .with_context(|| format!("failed to bind metrics listener {}", config.metrics.listen))?;
@@ -95,21 +97,17 @@ pub async fn serve(config: Config) -> Result<()> {
     info!(address = %config.metrics.listen, "local metrics listener started");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let http_shutdown = shutdown_rx.clone();
     let metrics_shutdown = shutdown_rx.clone();
-    let http_listener = http_listener.tap_io(|stream| {
-        if let Err(error) = stream.set_nodelay(true) {
-            warn!(%error, "failed to enable TCP_NODELAY");
-        }
-    });
-    let http_task = tokio::spawn(async move {
-        axum::serve(
-            http_listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .with_graceful_shutdown(wait_for_shutdown(http_shutdown))
-        .await
-    });
+    let http_handle = axum_server::Handle::new();
+    let mut http_server = axum_server::from_tcp(http_listener)?.handle(http_handle.clone());
+    http_server
+        .http_builder()
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(config.request_timeout());
+    let http_task = tokio::spawn(
+        http_server.serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>()),
+    );
     let metrics_task = tokio::spawn(async move {
         axum::serve(metrics_listener, metrics_app)
             .with_graceful_shutdown(wait_for_shutdown(metrics_shutdown))
@@ -132,12 +130,16 @@ pub async fn serve(config: Config) -> Result<()> {
                         config.server.https_listen
                     )
                 })?;
-        let server = axum_server::from_tcp_rustls(tls_listener, rustls)?
-            .handle(handle.clone())
-            .serve(
-                public_router(&config, state.clone())
-                    .into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            );
+        let mut server = axum_server::from_tcp_rustls(tls_listener, rustls)?.handle(handle.clone());
+        server
+            .http_builder()
+            .http1()
+            .timer(TokioTimer::new())
+            .header_read_timeout(config.request_timeout());
+        let server = server.serve(
+            public_router(&config, state.clone())
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        );
         info!(address = %config.server.https_listen, "HTTPS listener started");
         tls_handle = Some(handle);
         tls_task = Some(tokio::spawn(server));
@@ -146,6 +148,9 @@ pub async fn serve(config: Config) -> Result<()> {
     wait_for_signal().await?;
     info!("shutdown signal received");
     let _ = shutdown_tx.send(true);
+    http_handle.graceful_shutdown(Some(Duration::from_secs(
+        config.server.shutdown_grace_period_s,
+    )));
     if let Some(handle) = tls_handle {
         handle.graceful_shutdown(Some(Duration::from_secs(
             config.server.shutdown_grace_period_s,
@@ -597,7 +602,8 @@ async fn resolve_target(
     let relative = canonical
         .strip_prefix(root)
         .map_err(|_| StatusCode::FORBIDDEN)?;
-    let file = open_contained(root, relative)
+    let is_php = canonical.extension().and_then(|value| value.to_str()) == Some("php");
+    let file = open_contained(root, relative, !is_php)
         .await
         .map_err(|_| StatusCode::FORBIDDEN)?;
     let metadata = file.metadata().await.map_err(|_| StatusCode::NOT_FOUND)?;
@@ -612,16 +618,25 @@ async fn resolve_target(
 }
 
 #[cfg(target_os = "linux")]
-async fn open_contained(root: &Path, relative: &Path) -> std::io::Result<tokio::fs::File> {
+async fn open_contained(
+    root: &Path,
+    relative: &Path,
+    readable: bool,
+) -> std::io::Result<tokio::fs::File> {
     let root = root.to_owned();
     let relative = relative.to_owned();
     let file = tokio::task::spawn_blocking(move || {
         use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
         let directory = std::fs::File::open(root)?;
+        let flags = if readable {
+            OFlags::RDONLY | OFlags::NONBLOCK
+        } else {
+            OFlags::PATH
+        };
         let fd = openat2(
             &directory,
             relative.as_path(),
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            flags | OFlags::CLOEXEC,
             Mode::empty(),
             ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
         )?;
@@ -633,7 +648,11 @@ async fn open_contained(root: &Path, relative: &Path) -> std::io::Result<tokio::
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn open_contained(root: &Path, relative: &Path) -> std::io::Result<tokio::fs::File> {
+async fn open_contained(
+    root: &Path,
+    relative: &Path,
+    _readable: bool,
+) -> std::io::Result<tokio::fs::File> {
     tokio::fs::File::open(root.join(relative)).await
 }
 
@@ -668,11 +687,18 @@ async fn php_request(
         .extensions()
         .get::<ConnectInfo<std::net::SocketAddr>>()
         .map(|ConnectInfo(address)| *address);
-    let future = async {
-        let (parts, body) = request.into_parts();
-        let body = to_bytes(body, state.config.server.max_body_bytes)
+    let (parts, body) = request.into_parts();
+    let body =
+        match tokio::time::timeout(timeout, to_bytes(body, state.config.server.max_body_bytes))
             .await
-            .map_err(|error| format!("request body error: {error}"))?;
+        {
+            Ok(Ok(body)) => body,
+            Ok(Err(_)) => {
+                return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response();
+            }
+            Err(_) => return (StatusCode::REQUEST_TIMEOUT, "request body timeout").into_response(),
+        };
+    let future = async {
         let content_type = parts
             .headers
             .get(header::CONTENT_TYPE)
@@ -705,7 +731,12 @@ async fn php_request(
             let stream = TcpStream::connect(address)
                 .await
                 .map_err(|error| format!("PHP-FPM connection failed: {error}"))?;
-            execute_fastcgi(stream, fastcgi).await
+            execute_fastcgi(
+                stream,
+                fastcgi,
+                state.config.server.max_fastcgi_response_bytes,
+            )
+            .await
         } else if endpoint.starts_with("unix:") {
             #[cfg(unix)]
             {
@@ -713,7 +744,12 @@ async fn php_request(
                 let stream = tokio::net::UnixStream::connect(path)
                     .await
                     .map_err(|error| format!("PHP-FPM connection failed: {error}"))?;
-                execute_fastcgi(stream, fastcgi).await
+                execute_fastcgi(
+                    stream,
+                    fastcgi,
+                    state.config.server.max_fastcgi_response_bytes,
+                )
+                .await
             }
             #[cfg(not(unix))]
             Err("Unix PHP-FPM sockets require Linux/Unix".to_owned())
@@ -738,11 +774,15 @@ async fn php_request(
 async fn execute_fastcgi<S>(
     stream: S,
     request: FastCgiRequest<'static, io::Cursor<Vec<u8>>>,
+    max_response_bytes: usize,
 ) -> Result<Response, String>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let client = Client::new_tokio(stream);
+    let client = Client::new_tokio(LimitedFastcgiStream {
+        inner: stream,
+        remaining: max_response_bytes,
+    });
     let response = client
         .execute_once(request)
         .await
@@ -751,6 +791,60 @@ where
         warn!(stderr = %String::from_utf8_lossy(stderr), "PHP-FPM stderr");
     }
     fastcgi_response(response)
+}
+
+// Limit all FastCGI response bytes, including record framing, headers and stderr.
+struct LimitedFastcgiStream<S> {
+    inner: S,
+    remaining: usize,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for LimitedFastcgiStream<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        if self.remaining == 0 {
+            return Poll::Ready(Err(std::io::Error::other(
+                "FastCGI response exceeds configured limit",
+            )));
+        }
+        let mut storage = [0u8; 8192];
+        let limit = storage.len().min(buf.remaining()).min(self.remaining);
+        let mut limited = ReadBuf::new(&mut storage[..limit]);
+        match Pin::new(&mut self.inner).poll_read(cx, &mut limited) {
+            Poll::Ready(Ok(())) => {
+                let read = limited.filled().len();
+                self.remaining -= read;
+                buf.put_slice(limited.filled());
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for LimitedFastcgiStream<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        data: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, data)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 
 fn fastcgi_response(response: FastCgiResponse) -> Result<Response, String> {
@@ -976,11 +1070,20 @@ mod tests {
         }));
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config: Config = toml::from_str(&format!(
-            "[server]\nmax_proxy_response_bytes=5\n[[sites]]\nhost='example.test'\nmode='proxy'\nupstream='http://{addr}'\n"
+            "[server]\nmax_proxy_response_bytes=5\nmax_body_bytes=4\n[[sites]]\nhost='example.test'\nmode='proxy'\nupstream='http://{addr}'\n"
         )).unwrap();
         config.validate().unwrap();
         let state = test_state(config);
         let site = state.sites.get("example.test").unwrap();
+        let oversized = Request::builder()
+            .method("POST")
+            .uri("/")
+            .body(Body::from("12345"))
+            .unwrap();
+        assert_eq!(
+            proxy_request(&state, site, oversized).await.status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
         let request = || {
             Request::builder()
                 .uri("/")
@@ -1052,13 +1155,13 @@ mod tests {
         let secret = outside.path().join("secret.txt");
         std::fs::write(&file_path, "public").unwrap();
         std::fs::write(&secret, "secret").unwrap();
-        let mut file = open_contained(root.path(), Path::new("asset.txt"))
+        let mut file = open_contained(root.path(), Path::new("asset.txt"), true)
             .await
             .unwrap();
         std::fs::remove_file(&file_path).unwrap();
         symlink(&secret, &file_path).unwrap();
         assert!(
-            open_contained(root.path(), Path::new("asset.txt"))
+            open_contained(root.path(), Path::new("asset.txt"), true)
                 .await
                 .is_err()
         );
@@ -1087,6 +1190,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fastcgi_response_is_bounded_before_buffering() {
+        use tokio::io::AsyncWriteExt;
+        async fn run(limit: usize) -> Result<Response, String> {
+            let (client, mut backend) = tokio::io::duplex(4096);
+            tokio::spawn(async move {
+                let body = b"Content-Type: text/plain\r\n\r\nhello";
+                let header = [1, 6, 0, 1, 0, body.len() as u8, 0, 0];
+                backend.write_all(&header).await.unwrap();
+                backend.write_all(body).await.unwrap();
+                backend
+                    .write_all(&[1, 3, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            });
+            let http = http::Request::builder()
+                .uri("/")
+                .body(io::Cursor::new(Vec::new()))
+                .unwrap();
+            let request = FastCgiRequest::try_from_http_with(http, Params::default()).unwrap();
+            execute_fastcgi(client, request, limit).await
+        }
+        let response = run(1024).await.unwrap();
+        assert_eq!(to_bytes(response.into_body(), 20).await.unwrap(), "hello");
+        assert!(run(16).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn php_rejects_oversized_request_before_connecting_to_fpm() {
+        let dir = tempdir().unwrap();
+        let script = dir.path().join("index.php");
+        std::fs::write(&script, "<?php").unwrap();
+        let config: Config = toml::from_str(&format!("[server]\nmax_body_bytes=4\n[[sites]]\nhost='example.test'\nroot='{}'\nphp=true\nphp_fpm='tcp:127.0.0.1:9'\n", dir.path().display())).unwrap();
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .body(Body::from("12345"))
+            .unwrap();
+        let response = php_request(&state, site, dir.path(), script, request).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
     async fn rejects_malformed_http_headers_on_the_wire() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let dir = tempdir().unwrap();
@@ -1111,6 +1259,31 @@ mod tests {
             .unwrap();
         assert!(response[..n].starts_with(b"HTTP/1.1 400"));
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_header_deadline_closes_a_slow_connection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = bind_std_listener("127.0.0.1:0".parse().unwrap(), 16).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut server = axum_server::from_tcp(listener).unwrap();
+        server
+            .http_builder()
+            .http1()
+            .timer(TokioTimer::new())
+            .header_read_timeout(Duration::from_millis(100));
+        let app = Router::new().fallback(any(|| async { "ok" }));
+        let task = tokio::spawn(server.serve(app.into_make_service()));
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(b"GET / HTTP/1.1\r\nHost:").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        let mut response = [0; 128];
+        let read = tokio::time::timeout(Duration::from_secs(2), client.read(&mut response)).await;
+        assert!(
+            matches!(read, Ok(Ok(0)) | Ok(Err(_))),
+            "connection stayed open: {read:?}"
+        );
+        task.abort();
     }
 
     #[tokio::test]

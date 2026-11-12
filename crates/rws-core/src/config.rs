@@ -56,6 +56,7 @@ pub struct ServerConfig {
     pub listen_backlog: u32,
     pub max_body_bytes: usize,
     pub max_proxy_response_bytes: usize,
+    pub max_fastcgi_response_bytes: usize,
     pub request_timeout_ms: u64,
     pub shutdown_grace_period_s: u64,
     pub json_logs: bool,
@@ -70,6 +71,7 @@ impl Default for ServerConfig {
             listen_backlog: 1024,
             max_body_bytes: 8 * 1024 * 1024,
             max_proxy_response_bytes: 8 * 1024 * 1024,
+            max_fastcgi_response_bytes: 8 * 1024 * 1024,
             request_timeout_ms: 30_000,
             shutdown_grace_period_s: 15,
             json_logs: false,
@@ -197,6 +199,7 @@ impl Config {
             || self.server.listen_backlog == 0
             || self.server.max_body_bytes == 0
             || self.server.max_proxy_response_bytes == 0
+            || self.server.max_fastcgi_response_bytes == 0
             || self.server.request_timeout_ms == 0
             || self.server.shutdown_grace_period_s == 0
             || self.websocket.outbound_queue_messages == 0
@@ -309,6 +312,15 @@ impl Config {
     pub fn request_timeout(&self) -> Duration {
         Duration::from_millis(self.server.request_timeout_ms)
     }
+
+    pub async fn validate_tls(&self) -> Result<()> {
+        if let Some(tls) = &self.tls {
+            axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert_file, &tls.key_file)
+                .await
+                .context("failed to load TLS certificate/key")?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -369,6 +381,7 @@ mod tests {
             "request_timeout_ms=0",
             "shutdown_grace_period_s=0",
             "max_proxy_response_bytes=0",
+            "max_fastcgi_response_bytes=0",
         ] {
             let text = format!(
                 "[server]\n{setting}\n[[sites]]\nhost='example.test'\nroot='{}'\n",
@@ -377,5 +390,23 @@ mod tests {
             let config: Config = toml::from_str(&text).unwrap();
             assert!(config.validate().is_err(), "accepted {setting}");
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_tls_certificate_contents() {
+        let dir = tempdir().unwrap();
+        let cert = dir.path().join("certificate.pem");
+        let key = dir.path().join("key.pem");
+        fs::write(&cert, "not a certificate").unwrap();
+        fs::write(&key, "not a private key").unwrap();
+        let text = format!(
+            "[tls]\ncert_file='{}'\nkey_file='{}'\n[[sites]]\nhost='example.test'\nroot='{}'\n",
+            cert.display(),
+            key.display(),
+            dir.path().display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        config.validate().unwrap();
+        assert!(config.validate_tls().await.is_err());
     }
 }

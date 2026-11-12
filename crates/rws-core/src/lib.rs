@@ -64,6 +64,7 @@ pub async fn run(flavor: Flavor) -> Result<()> {
 
     let config = Config::load(&config_path)?;
     if check {
+        config.validate_tls().await?;
         println!("{}: configuration is valid", config_path.display());
         return Ok(());
     }

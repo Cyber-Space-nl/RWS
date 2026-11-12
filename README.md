@@ -84,9 +84,12 @@ This is an MVP for correctness testing and performance measurement. It is not ye
 - Site roots and their parent directories must not be writable by untrusted users. PHP-FPM opens
   scripts separately from RWS, and non-Linux builds do not have race-resistant contained opens.
 - Linux static-file containment uses `openat2` (Linux 5.6 or newer); requests fail closed if it is unavailable.
-- `request_timeout_ms` does not limit HTTP header-read time. Protect public deployments with an
-  appropriately configured front-end until a header deadline is implemented.
+- `request_timeout_ms` limits HTTP/1 header reading, proxy request-body reading and PHP requests;
+  it is not a universal connection or response-stream timeout. HTTP/2 and slow-client limits still
+  need additional validation.
 - PHP routing supports direct `.php` script paths and an optional per-site front-controller fallback; PATH_INFO is not implemented.
+- PHP-FPM response buffering is limited by `max_fastcgi_response_bytes` (default 8 MiB), which
+  counts FastCGI framing, headers and stderr as well as the body. Oversized responses return 502.
 - Comfy HTTP proxy buffers request and response bodies up to `max_body_bytes` and `max_proxy_response_bytes`, respectively, and does not proxy WebSocket upgrades. The latter defaults to 8 MiB; oversized upstream responses return 502. These limits are per request, not global process memory limits.
 - The proxy strips client-supplied `Forwarded`, `X-Forwarded-*` and `X-Real-IP` headers; it does not currently generate trusted forwarding headers. Backends must not rely on them for client identity.
 - The scheduler currently governs native WebSocket outbound application messages; it does not replace Tokio or kernel scheduling.
@@ -336,6 +339,8 @@ sudo ./scripts/uninstall.sh comfy
 The uninstall script preserves `/etc/rws-*` and `/var/www` data.
 
 ## Developer checks
+
+See [security testing and limitations](docs/SECURITY_TESTING.md) for the test scope and remaining trust boundaries.
 
 ```bash
 cargo fmt --check

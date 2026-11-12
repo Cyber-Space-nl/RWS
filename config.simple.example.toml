@@ -4,6 +4,7 @@ https_listen = "0.0.0.0:8443"
 max_in_flight_requests = 1024
 listen_backlog = 1024
 max_body_bytes = 8388608
+max_fastcgi_response_bytes = 8388608
 request_timeout_ms = 30000
 shutdown_grace_period_s = 15
 json_logs = false

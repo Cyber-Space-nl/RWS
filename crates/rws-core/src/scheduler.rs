@@ -321,4 +321,43 @@ mod tests {
             .await;
         assert_eq!(result, Err(EnqueueError::QueueFull));
     }
+
+    #[tokio::test]
+    async fn slow_writer_does_not_prevent_another_connection_from_receiving() {
+        let config = WebSocketConfig {
+            outbound_queue_messages: 1,
+            outbound_queue_bytes: 64,
+            ..WebSocketConfig::default()
+        };
+        let scheduler = SchedulerHandle::start(config, Arc::new(Metrics::default()));
+        let (slow_writer, slow_reader) = scheduler.writer_channel();
+        let slow = scheduler.register(slow_writer).await.unwrap();
+        scheduler
+            .enqueue(slow, OutboundMessage::Binary(Bytes::from_static(b"one")))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while slow_reader.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        scheduler
+            .enqueue(slow, OutboundMessage::Binary(Bytes::from_static(b"two")))
+            .await
+            .unwrap();
+        let (fast_writer, mut fast_reader) = scheduler.writer_channel();
+        let fast = scheduler.register(fast_writer).await.unwrap();
+        scheduler
+            .enqueue(fast, OutboundMessage::Binary(Bytes::from_static(b"ok")))
+            .await
+            .unwrap();
+        let message = tokio::time::timeout(std::time::Duration::from_secs(1), fast_reader.recv())
+            .await
+            .unwrap();
+        assert!(matches!(message, Some(OutboundMessage::Binary(bytes)) if bytes == "ok"));
+        scheduler.unregister(slow).await;
+        scheduler.unregister(fast).await;
+    }
 }
