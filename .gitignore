@@ -22,3 +22,7 @@ Thumbs.db
 # Invalid benchmark run retained locally for diagnostics only
 /benchmark-results-20261027-invalid-firewall-attempt/
 
+# Internal planning documents retained locally
+/02_RSW_CONCEPT_KORT.md
+/03_CODEX_PROMPT_RSW_MVP.md
+
