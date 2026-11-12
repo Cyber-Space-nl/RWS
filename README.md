@@ -14,7 +14,7 @@ and an offered rate of 10,000 requests/second. The results below were measured o
     <td width="50%"><img src="docs/benchmark/latency.svg" alt="Median latency profile for RWS, Nginx and Apache"></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/benchmark/memory.svg" alt="Peak resident memory for RWS, Nginx and Apache"></td>
+    <td width="50%"><img src="docs/benchmark/memory.svg" alt="RWS memory stability over 20 million static keep-alive requests"></td>
     <td width="50%"><img src="docs/benchmark/failures.svg" alt="Failed responses by repetition for RWS, Nginx and Apache"></td>
   </tr>
 </table>
@@ -22,13 +22,20 @@ and an offered rate of 10,000 requests/second. The results below were measured o
 At this capped workload, RWS and Nginx both sustained more than 99% of the offered rate without
 failed responses. RWS recorded a median p99 latency of **7.10 ms**, compared with **8.19 ms** for
 Nginx. Apache saturated below the offered rate and recorded 250 failed responses across its three
-runs. RWS used substantially more resident memory: **254.7 MiB**, versus **11.9 MiB** for Nginx
-and **95.1 MiB** for Apache.
+runs.
 
-These measurements describe this specific host and workload; the offered-rate ceiling means they
-do not establish maximum RWS or Nginx throughput. See the
-[full benchmark report](RWS_NGINX_APACHE_BENCHMARK.html) for the environment, individual runs,
-resource data, warnings and interpretation.
+A newer cold-start stability test processed 20 million static keep-alive requests without errors.
+RWS rose from **6.55 MiB** cold RSS to **11.11 MiB** after 20 million requests, with only **4 KiB**
+of growth between 15 and 20 million requests. A separate connection-churn test peaked at
+**40.3 MiB** and settled at **36.7 MiB** after temporary worker threads disappeared. Both tests
+formed a plateau rather than showing continuously growing memory use.
+
+These measurements describe specific workloads on the same one-vCPU test host. The offered-rate
+ceiling means the comparison does not establish maximum RWS or Nginx throughput, while the
+20-million-request run is a leak-stability test rather than a cross-server memory comparison. See
+the [comparison report](RWS_NGINX_APACHE_BENCHMARK.html) and
+[20-million-request memory report](RWS_MEMORY_STABILITY_20M.html) for the complete methods,
+warnings and raw measurements.
 
 ## Workspace components
 
