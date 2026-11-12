@@ -59,6 +59,12 @@ impl HistogramData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSettings {
+    #[serde(default)]
+    pub warmup_per_connection: Option<bool>,
+    #[serde(default)]
+    pub unique_paths_total: Option<usize>,
+    #[serde(default)]
+    pub unique_paths_used: Option<usize>,
     pub connections: usize,
     pub active_percent: f64,
     pub idle_duration_secs: u64,

@@ -4,6 +4,10 @@
 for repeatable RWS-versus-Nginx socket scalability tests. It uses Tokio tasks on a bounded set of
 runtime worker threads, not one operating-system thread per socket.
 
+See [the reproducible benchmarking guide](../../docs/BENCHMARKING.md) for fixture preparation,
+cold and warm workloads, environment metadata, limitations and Markdown reporting. Use a freshly
+built binary: the bundled distribution may predate newer options.
+
 ## Build and install
 
 Ubuntu 24.04 with Rust 1.85 or newer:
@@ -38,7 +42,7 @@ Inspect the load generator before testing:
 
 ```bash
 rws-bench check \
-  --target http://94.237.44.223/robots.txt \
+  --target http://SERVER/robots.txt \
   --connections 100000 \
   --source-ip 192.0.2.10 \
   --source-ip 192.0.2.11
@@ -64,7 +68,7 @@ Approved remote run with read-only server monitoring:
 ```bash
 rws-bench run \
   --config tools/rws-bench/example.toml \
-  --monitor-ssh root@94.237.44.223 \
+  --monitor-ssh USER@SERVER \
   --monitor-process rws-comfy \
   --monitor-port 80 \
   --output rws-adaptive-on-run1.json
@@ -89,7 +93,7 @@ variants):
 
 ```bash
 rws-bench websocket \
-  --url ws://94.237.44.223/_rws/ws \
+  --url ws://SERVER/_rws/ws \
   --host bench.local \
   --label rws-adaptive-on \
   --connections 100 \

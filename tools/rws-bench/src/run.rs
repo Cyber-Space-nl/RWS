@@ -8,10 +8,13 @@ use anyhow::{Context, Result, bail};
 use hdrhistogram::Histogram;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     net::IpAddr,
-    path::Path,
-    sync::Arc,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -39,6 +42,8 @@ pub struct RunConfig {
     pub monitor_process: Option<String>,
     pub monitor_port: u16,
     pub monitor_interval_ms: u64,
+    pub skip_warmup: bool,
+    pub unique_paths: Option<PathBuf>,
 }
 
 impl Default for RunConfig {
@@ -60,6 +65,8 @@ impl Default for RunConfig {
             monitor_process: None,
             monitor_port: 80,
             monitor_interval_ms: 1_000,
+            skip_warmup: false,
+            unique_paths: None,
         }
     }
 }
@@ -90,6 +97,9 @@ impl RunConfig {
         if self.host.trim().is_empty() || self.host.contains(['\r', '\n']) {
             bail!("host header is empty or unsafe");
         }
+        if self.unique_paths.is_some() && !self.skip_warmup {
+            bail!("unique paths require --skip-warmup");
+        }
         Ok(())
     }
 }
@@ -115,6 +125,13 @@ enum ConnectionStatus {
 
 pub async fn execute(config: RunConfig) -> Result<RunResult> {
     config.validate()?;
+    let unique_paths = config
+        .unique_paths
+        .as_ref()
+        .map(|file| load_unique_paths(file))
+        .transpose()?
+        .map(Arc::new);
+    let next_path = Arc::new(AtomicUsize::new(0));
     let endpoint = Arc::new(HttpEndpoint::parse(&config.target)?);
     let addresses = endpoint.resolve().await?;
     let preflight = inspect(
@@ -158,7 +175,8 @@ pub async fn execute(config: RunConfig) -> Result<RunResult> {
                     tasks.spawn(connection_worker(
                         id, id < active_connections, endpoint, address, source_ip, host,
                         timeout, config.active_duration_secs, config.idle_duration_secs,
-                        config.rps, active_connections, status, start,
+                        config.rps, active_connections, status, start, !config.skip_warmup,
+                        unique_paths.clone(), Arc::clone(&next_path),
                     ));
                     spawned += 1;
                 }
@@ -233,6 +251,15 @@ pub async fn execute(config: RunConfig) -> Result<RunResult> {
     if summary.connections_opened < config.connections {
         warnings.push("Not all requested connections became usable; do not report the requested connection count as achieved.".to_owned());
     }
+    if config.skip_warmup && unique_paths.is_none() {
+        warnings.push("Warm-up requests were skipped. Only the initial requests can encounter a cold application cache; this run does not establish fully cold-cache throughput or operating-system cache state.".to_owned());
+    }
+    if let Some(paths) = &unique_paths {
+        warnings.push(format!("Unique-path mode used {} of {} paths at most once; cold application and OS cache state must be verified independently.", next_path.load(Ordering::Relaxed).min(paths.len()), paths.len()));
+        if next_path.load(Ordering::Relaxed) >= paths.len() {
+            warnings.push("The unique path list was exhausted; workers may have stopped early and throughput is still divided by the configured active duration.".to_owned());
+        }
+    }
     Ok(RunResult {
         schema_version: SCHEMA_VERSION,
         label: config.label.clone(),
@@ -240,6 +267,11 @@ pub async fn execute(config: RunConfig) -> Result<RunResult> {
         host_header: config.host.clone(),
         started_unix_ms,
         settings: RunSettings {
+            warmup_per_connection: Some(!config.skip_warmup),
+            unique_paths_total: unique_paths.as_ref().map(|paths| paths.len()),
+            unique_paths_used: unique_paths
+                .as_ref()
+                .map(|paths| next_path.load(Ordering::Relaxed).min(paths.len())),
             connections: config.connections,
             active_percent: config.active_percent,
             idle_duration_secs: config.idle_duration_secs,
@@ -273,6 +305,9 @@ async fn connection_worker(
     active_connections: usize,
     status: mpsc::Sender<ConnectionStatus>,
     mut start: broadcast::Receiver<()>,
+    warmup: bool,
+    unique_paths: Option<Arc<Vec<String>>>,
+    next_path: Arc<AtomicUsize>,
 ) -> WorkerResult {
     let connected = Instant::now();
     let mut connection =
@@ -284,15 +319,17 @@ async fn connection_worker(
             }
         };
     let connection_latency = micros(connected.elapsed());
-    match connection.request(timeout).await {
-        Ok(200..=399) => {}
-        Ok(status_code) => {
-            let _ = status.send(ConnectionStatus::Failed).await;
-            return failed(anyhow::anyhow!("warm-up returned HTTP {status_code}"));
-        }
-        Err(error) => {
-            let _ = status.send(ConnectionStatus::Failed).await;
-            return failed(error.context("warm-up request failed"));
+    if warmup {
+        match connection.request(timeout).await {
+            Ok(200..=399) => {}
+            Ok(status_code) => {
+                let _ = status.send(ConnectionStatus::Failed).await;
+                return failed(anyhow::anyhow!("warm-up returned HTTP {status_code}"));
+            }
+            Err(error) => {
+                let _ = status.send(ConnectionStatus::Failed).await;
+                return failed(error.context("warm-up request failed"));
+            }
         }
     }
     let _ = status.send(ConnectionStatus::Ready).await;
@@ -322,9 +359,22 @@ async fn connection_worker(
         if tokio::time::Instant::now() >= deadline {
             break;
         }
+        let path = if let Some(paths) = &unique_paths {
+            let index = next_path.fetch_add(1, Ordering::Relaxed);
+            if index >= paths.len() {
+                break;
+            }
+            Some(paths[index].as_str())
+        } else {
+            None
+        };
         let request_started = Instant::now();
         result.requests_sent += 1;
-        match connection.request(timeout).await {
+        let response = match path {
+            Some(path) => connection.request_path(timeout, path).await,
+            None => connection.request(timeout).await,
+        };
+        match response {
             Ok(200..=399) => {
                 result.responses_ok += 1;
                 if let Some(histogram) = result.request_latency.as_mut() {
@@ -351,6 +401,29 @@ async fn connection_worker(
         };
     }
     result
+}
+
+fn load_unique_paths(file: &Path) -> Result<Vec<String>> {
+    let text = std::fs::read_to_string(file)
+        .with_context(|| format!("failed to read path list {}", file.display()))?;
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+    for line in text.lines() {
+        if !line.starts_with('/')
+            || line.starts_with("//")
+            || line.bytes().any(|b| b <= b' ' || b >= 127 || b == b'#')
+        {
+            bail!("path list contains an invalid request path");
+        }
+        if !seen.insert(line.to_owned()) {
+            bail!("path list contains duplicate paths");
+        }
+        paths.push(line.to_owned());
+    }
+    if paths.is_empty() {
+        bail!("path list must not be empty");
+    }
+    Ok(paths)
 }
 
 fn failed(error: anyhow::Error) -> WorkerResult {
@@ -395,6 +468,87 @@ pub fn merge_error_maps(target: &mut BTreeMap<String, u64>, source: &BTreeMap<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn skip_warmup_sends_no_unmeasured_request() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let count = Arc::clone(&requests);
+        let paths_seen = Arc::clone(&received);
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut pending = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = stream.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                pending.extend_from_slice(&buf[..n]);
+                while let Some(pos) = pending.windows(4).position(|v| v == b"\r\n\r\n") {
+                    let first = String::from_utf8_lossy(&pending[..pos])
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .to_owned();
+                    paths_seen.lock().unwrap().push(first);
+                    pending.drain(..pos + 4);
+                    count.fetch_add(1, Ordering::SeqCst);
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let temp = tempfile::tempdir().unwrap();
+        let path_list = temp.path().join("paths.txt");
+        std::fs::write(&path_list, "/cold/1.txt\n/cold/2.txt\n").unwrap();
+        let config = RunConfig {
+            target: format!("http://{address}/"),
+            connections: 1,
+            active_percent: 100.0,
+            active_duration_secs: 1,
+            idle_duration_secs: 0,
+            rps: 4,
+            skip_warmup: true,
+            unique_paths: Some(path_list),
+            ..RunConfig::default()
+        };
+        let result = execute(config).await.unwrap();
+        server.await.unwrap();
+        assert!(result.summary.requests_sent > 0);
+        assert_eq!(
+            requests.load(Ordering::SeqCst) as u64,
+            result.summary.requests_sent
+        );
+        assert_eq!(result.settings.warmup_per_connection, Some(false));
+        assert_eq!(result.settings.unique_paths_used, Some(2));
+        assert_eq!(
+            *received.lock().unwrap(),
+            ["GET /cold/1.txt HTTP/1.1", "GET /cold/2.txt HTTP/1.1"]
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("exhausted"))
+        );
+    }
+
+    #[test]
+    fn path_list_rejects_duplicates_and_invalid_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("paths.txt");
+        for content in ["/same\n/same\n", "/good\n/bad path\n", "//host/path\n", ""] {
+            std::fs::write(&path, content).unwrap();
+            assert!(load_unique_paths(&path).is_err());
+        }
+    }
 
     #[test]
     fn large_test_requires_explicit_opt_in() {

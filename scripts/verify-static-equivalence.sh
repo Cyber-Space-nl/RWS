@@ -20,8 +20,7 @@ header_value() {
     local file=$1
     local name=$2
     awk -v wanted="$name" '
-        BEGIN { IGNORECASE=1 }
-        $0 ~ "^" wanted ":[[:space:]]*" {
+        tolower($0) ~ "^" tolower(wanted) ":[[:space:]]*" {
             sub("^[^:]+:[[:space:]]*", "")
             sub("\\r$", "")
             print
@@ -40,6 +39,10 @@ cmp --silent "$work_dir/rws.body" "$work_dir/nginx.body" || {
 for header in Content-Type Content-Length X-Content-Type-Options; do
     rws_value=$(header_value "$work_dir/rws.headers" "$header")
     nginx_value=$(header_value "$work_dir/nginx.headers" "$header")
+    if [[ -z "$rws_value" || -z "$nginx_value" ]]; then
+        echo "ERROR: $header is missing from one or both responses" >&2
+        exit 1
+    fi
     if [[ "$rws_value" != "$nginx_value" ]]; then
         echo "ERROR: $header differs: RWS='$rws_value' Nginx='$nginx_value'" >&2
         exit 1

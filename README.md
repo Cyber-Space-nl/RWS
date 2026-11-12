@@ -315,6 +315,9 @@ without access logs, install `wrk`, and run:
 ./scripts/benchmark-http.sh http://127.0.0.1/robots.txt bench.local
 ```
 
+For reproducible cold and warm workloads, environment recording and JSON/Markdown reports, see
+[the benchmarking guide](docs/BENCHMARKING.md).
+
 Run the load generator on a separate machine for publishable results so it does not compete with
 the server for CPU. Benchmark static HTTP, TLS, PHP and WebSockets separately.
 

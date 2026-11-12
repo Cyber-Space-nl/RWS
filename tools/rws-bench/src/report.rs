@@ -31,16 +31,57 @@ pub fn load_results(paths: &[PathBuf]) -> Result<Vec<RunResult>> {
 }
 
 pub fn write_report(paths: &[PathBuf], output: &Path, merge_load_generators: bool) -> Result<()> {
+    write_report_with_environment(paths, output, merge_load_generators, &[])
+}
+
+pub fn write_report_with_environment(
+    paths: &[PathBuf],
+    output: &Path,
+    merge_load_generators: bool,
+    environments: &[PathBuf],
+) -> Result<()> {
     let runs = load_results(paths)?;
-    let rendered = if output
+    let html = output
         .extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("html"))
-    {
+        .is_some_and(|value| value.eq_ignore_ascii_case("html"));
+    let mut rendered = if html {
         render_html(&runs, merge_load_generators)?
     } else {
         render_markdown(&runs, merge_load_generators)?
     };
+    if !environments.is_empty() {
+        let mut details = String::new();
+        if html {
+            details.push_str("<section><h2>Recorded environments</h2>");
+        } else {
+            details.push_str("\n## Recorded environments\n\n");
+        }
+        for path in environments {
+            let input = std::fs::read(path)
+                .with_context(|| format!("failed to read environment {}", path.display()))?;
+            let value: serde_json::Value = serde_json::from_slice(&input)
+                .with_context(|| format!("invalid environment JSON {}", path.display()))?;
+            let pretty = serde_json::to_string_pretty(&value)?;
+            if html {
+                write!(details, "<pre>{}</pre>", html_escape(&pretty))?;
+            } else {
+                for line in pretty.lines() {
+                    writeln!(details, "    {line}")?;
+                }
+                details.push('\n');
+            }
+        }
+        if html {
+            details.push_str("</section>");
+            let index = rendered
+                .rfind("</body>")
+                .context("HTML report has no closing body")?;
+            rendered.insert_str(index, &details);
+        } else {
+            rendered.push_str(&details);
+        }
+    }
     std::fs::write(output, rendered)
         .with_context(|| format!("failed to write {}", output.display()))
 }
@@ -61,13 +102,14 @@ pub fn render_html(runs: &[RunResult], merge_load_generators: bool) -> Result<St
         runs.len()
     )?;
     out.push_str("<section><h2>Scope and validity</h2><p>Requested and achieved connection counts are kept separate. Server metrics are collected independently from load-generator measurements. A warning means the corresponding result must not be treated as an unconstrained capacity claim.</p></section>");
-    out.push_str("<section><h2>Individual runs</h2><table><thead><tr><th>Label</th><th>Target</th><th>Requested</th><th>Opened</th><th>Active</th><th>Offered RPS</th><th>Achieved RPS</th><th>p50</th><th>p95</th><th>p99</th><th>Max</th><th>Errors</th></tr></thead><tbody>");
+    out.push_str("<section><h2>Individual runs</h2><table><thead><tr><th>Label</th><th>Target</th><th>Warm-up</th><th>Requested</th><th>Opened</th><th>Active</th><th>Offered RPS</th><th>Achieved RPS</th><th>p50</th><th>p95</th><th>p99</th><th>Max</th><th>Errors</th><th>Response failure rate</th></tr></thead><tbody>");
     for run in runs {
         writeln!(
             out,
-            "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{:.3}%</td><td>{}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{:.3}%</td><td>{}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             html_escape(&run.label),
             html_escape(&run.target),
+            warmup_label(run.settings.warmup_per_connection),
             run.summary.connections_requested,
             run.summary.connections_opened,
             run.settings.active_percent,
@@ -77,7 +119,8 @@ pub fn render_html(runs: &[RunResult], merge_load_generators: bool) -> Result<St
             format_us(run.summary.request_latency.p95_us),
             format_us(run.summary.request_latency.p99_us),
             format_us(run.summary.request_latency.max_us),
-            run.summary.responses_failed + run.summary.connections_failed as u64
+            run.summary.responses_failed + run.summary.connections_failed as u64,
+            response_failure_rate(run)
         )?;
     }
     out.push_str("</tbody></table></section>");
@@ -165,10 +208,10 @@ pub fn render_html(runs: &[RunResult], merge_load_generators: bool) -> Result<St
         for candidate in values.iter().skip(1) {
             writeln!(
                 out,
-                "<li><strong>{}</strong>: throughput {:+.2}%; p99 latency {:+.2}%.</li>",
+                "<li><strong>{}</strong>: throughput {}; p99 latency {}.</li>",
                 html_escape(&candidate.label),
-                percent(candidate.rps, baseline.rps),
-                percent(
+                percent_change(candidate.rps, baseline.rps),
+                percent_change(
                     candidate.latency.p99_us as f64,
                     baseline.latency.p99_us as f64
                 )
@@ -183,6 +226,21 @@ pub fn render_html(runs: &[RunResult], merge_load_generators: bool) -> Result<St
             writeln!(
                 out,
                 "<p class=\"warning\"><strong>{}</strong>: server monitoring was unavailable.</p>",
+                html_escape(&run.label)
+            )?;
+            any = true;
+        } else if !run
+            .server_samples
+            .iter()
+            .any(|sample| sample.cpu_percent.is_some())
+            || !run
+                .server_samples
+                .iter()
+                .any(|sample| sample.rss_kib.is_some())
+        {
+            writeln!(
+                out,
+                "<p class=\"warning\"><strong>{}</strong>: CPU or RSS monitoring was unavailable.</p>",
                 html_escape(&run.label)
             )?;
             any = true;
@@ -227,24 +285,25 @@ pub fn render_markdown(runs: &[RunResult], merge_load_generators: bool) -> Resul
     writeln!(out, "## Scope and validity\n")?;
     writeln!(
         out,
-        "Requested connection counts are never substituted for achieved counts. Server and load-generator measurements are reported separately. Results with warnings must be interpreted as conditional, not as proof of server capacity.\n"
+        "Requested connection counts are never substituted for achieved counts. Response failure rate is failed responses divided by all completed or failed requests; connection failures are reported separately in Errors. Server and load-generator measurements are reported separately. Results with warnings must be interpreted as conditional, not as proof of server capacity.\n"
     )?;
 
     writeln!(out, "## Individual runs\n")?;
     writeln!(
         out,
-        "| Label | Target | Requested | Opened | Active | Offered RPS | Achieved RPS | p50 | p95 | p99 | Max | Errors |"
+        "| Label | Target | Warm-up | Requested | Opened | Active | Offered RPS | Achieved RPS | p50 | p95 | p99 | Max | Errors | Response failure rate |"
     )?;
     writeln!(
         out,
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     )?;
     for run in runs {
         writeln!(
             out,
-            "| {} | `{}` | {} | {} | {:.3}% | {} | {:.2} | {} | {} | {} | {} | {} |",
+            "| {} | `{}` | {} | {} | {} | {:.3}% | {} | {:.2} | {} | {} | {} | {} | {} | {} |",
             escape(&run.label),
             escape(&run.target),
+            warmup_label(run.settings.warmup_per_connection),
             run.summary.connections_requested,
             run.summary.connections_opened,
             run.settings.active_percent,
@@ -254,7 +313,8 @@ pub fn render_markdown(runs: &[RunResult], merge_load_generators: bool) -> Resul
             format_us(run.summary.request_latency.p95_us),
             format_us(run.summary.request_latency.p99_us),
             format_us(run.summary.request_latency.max_us),
-            run.summary.responses_failed + run.summary.connections_failed as u64
+            run.summary.responses_failed + run.summary.connections_failed as u64,
+            response_failure_rate(run)
         )?;
     }
 
@@ -361,10 +421,10 @@ pub fn render_markdown(runs: &[RunResult], merge_load_generators: bool) -> Resul
         for candidate in values.iter().skip(1) {
             writeln!(
                 out,
-                "- `{}`: throughput {:+.2}%, p99 latency {:+.2}%.",
+                "- `{}`: throughput {}, p99 latency {}.",
                 escape(&candidate.label),
-                percent(candidate.rps, baseline.rps),
-                percent(
+                percent_change(candidate.rps, baseline.rps),
+                percent_change(
                     candidate.latency.p99_us as f64,
                     baseline.latency.p99_us as f64
                 )
@@ -379,6 +439,21 @@ pub fn render_markdown(runs: &[RunResult], merge_load_generators: bool) -> Resul
             writeln!(
                 out,
                 "- `{}`: server monitoring was not enabled; CPU, RAM, FD and TCP conclusions are unavailable.",
+                escape(&run.label)
+            )?;
+            warning_count += 1;
+        } else if !run
+            .server_samples
+            .iter()
+            .any(|sample| sample.cpu_percent.is_some())
+            || !run
+                .server_samples
+                .iter()
+                .any(|sample| sample.rss_kib.is_some())
+        {
+            writeln!(
+                out,
+                "- `{}`: CPU or RSS monitoring was unavailable.",
                 escape(&run.label)
             )?;
             warning_count += 1;
@@ -542,12 +617,32 @@ fn median_f64(mut values: Vec<f64>) -> Option<f64> {
     values.sort_by(f64::total_cmp);
     values.get(values.len().saturating_sub(1) / 2).copied()
 }
-fn percent(value: f64, baseline: f64) -> f64 {
+fn percent_change(value: f64, baseline: f64) -> String {
     if baseline == 0.0 {
-        0.0
+        "n/a".to_owned()
     } else {
-        (value - baseline) / baseline * 100.0
+        format!("{:+.2}%", (value - baseline) / baseline * 100.0)
     }
+}
+fn warmup_label(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unknown",
+    }
+}
+fn response_failure_rate(run: &RunResult) -> String {
+    let total = run
+        .summary
+        .responses_ok
+        .saturating_add(run.summary.responses_failed);
+    if total == 0 {
+        return "n/a".to_owned();
+    }
+    format!(
+        "{:.2}%",
+        run.summary.responses_failed as f64 * 100.0 / total as f64
+    )
 }
 fn format_us(value: u64) -> String {
     if value >= 1_000 {
@@ -601,6 +696,9 @@ mod tests {
             host_header: "bench.local".to_owned(),
             started_unix_ms: 0,
             settings: RunSettings {
+                warmup_per_connection: Some(true),
+                unique_paths_total: None,
+                unique_paths_used: None,
                 connections: 10,
                 active_percent: 10.0,
                 idle_duration_secs: 1,
@@ -638,5 +736,31 @@ mod tests {
         let report = render_markdown(&[sample()], false).unwrap();
         assert!(report.contains("rws-on"));
         assert!(report.contains("server monitoring was not enabled"));
+    }
+
+    #[test]
+    fn reports_missing_baseline_and_response_failure_rate_honestly() {
+        let mut zero = sample();
+        zero.label = "a-baseline".to_owned();
+        zero.summary.achieved_rps = 0.0;
+        zero.summary.request_latency.p99_us = 0;
+        let mut candidate = sample();
+        candidate.label = "b-candidate".to_owned();
+        candidate.summary.responses_failed = 2;
+        candidate.summary.responses_ok = 8;
+        let report = render_markdown(&[zero, candidate], false).unwrap();
+        assert!(report.contains("throughput n/a, p99 latency n/a"));
+        assert!(report.contains("20.00%"));
+    }
+
+    #[test]
+    fn older_results_without_warmup_field_remain_readable() {
+        let mut json = serde_json::to_value(sample()).unwrap();
+        json["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("warmup_per_connection");
+        let restored: RunResult = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.settings.warmup_per_connection, None);
     }
 }

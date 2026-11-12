@@ -59,6 +59,7 @@ pub struct HttpConnection {
     stream: TcpStream,
     read_buf: BytesMut,
     request: Vec<u8>,
+    host_header: String,
 }
 
 impl HttpConnection {
@@ -94,11 +95,26 @@ impl HttpConnection {
             stream,
             read_buf: BytesMut::with_capacity(4096),
             request,
+            host_header: host_header.to_owned(),
         })
     }
 
     pub async fn request(&mut self, timeout: Duration) -> Result<u16> {
         tokio::time::timeout(timeout, self.stream.write_all(&self.request))
+            .await
+            .context("request write timed out")??;
+        tokio::time::timeout(timeout, self.read_response())
+            .await
+            .context("response read timed out")?
+    }
+
+    pub async fn request_path(&mut self, timeout: Duration, path: &str) -> Result<u16> {
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {}\r\nUser-Agent: rws-bench/{}\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
+            self.host_header,
+            env!("CARGO_PKG_VERSION")
+        );
+        tokio::time::timeout(timeout, self.stream.write_all(request.as_bytes()))
             .await
             .context("request write timed out")??;
         tokio::time::timeout(timeout, self.read_response())

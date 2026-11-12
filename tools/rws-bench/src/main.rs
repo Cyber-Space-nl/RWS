@@ -110,6 +110,12 @@ struct RunArgs {
     /// Required above 10,000 connections. This does not bypass OS limits.
     #[arg(long)]
     allow_large_test: bool,
+    /// Skip the per-connection warm-up request (cold-start experiments only).
+    #[arg(long)]
+    skip_warmup: bool,
+    /// File with one distinct origin-form request path per line.
+    #[arg(long)]
+    unique_paths: Option<PathBuf>,
     /// SSH destination used only for periodic read-only monitoring.
     #[arg(long)]
     monitor_ssh: Option<String>,
@@ -134,6 +140,9 @@ struct ReportArgs {
     /// Sum runs sharing a label as simultaneous load generators instead of taking repetition medians.
     #[arg(long)]
     merge_load_generators: bool,
+    /// Environment JSON files recorded on server and generator hosts.
+    #[arg(long = "environment")]
+    environment: Vec<PathBuf>,
 }
 
 #[tokio::main]
@@ -194,7 +203,12 @@ async fn main() -> Result<()> {
             println!("latency_p99_us={}", result.summary.request_latency.p99_us);
         }
         Command::Report(args) | Command::Compare(args) => {
-            report::write_report(&args.inputs, &args.output, args.merge_load_generators)?;
+            report::write_report_with_environment(
+                &args.inputs,
+                &args.output,
+                args.merge_load_generators,
+                &args.environment,
+            )?;
             println!("wrote {}", args.output.display());
         }
     }
@@ -206,6 +220,12 @@ fn apply_run_args(args: RunArgs) -> Result<RunConfig> {
         Some(path) => RunConfig::load(path)?,
         None => RunConfig::default(),
     };
+    if args.skip_warmup {
+        config.skip_warmup = true;
+    }
+    if args.unique_paths.is_some() {
+        config.unique_paths = args.unique_paths;
+    }
     if let Some(value) = args.target {
         config.target = value;
     }

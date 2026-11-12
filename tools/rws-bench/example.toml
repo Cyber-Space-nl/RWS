@@ -1,5 +1,5 @@
 label = "rws-adaptive-on"
-target = "http://94.237.44.223/robots.txt"
+target = "http://127.0.0.1:8080/robots.txt"
 host = "bench.local"
 connections = 100
 active_percent = 1.0
@@ -10,7 +10,8 @@ connect_rate = 1000
 request_timeout_ms = 10000
 source_ips = []
 allow_large_test = false
-monitor_ssh = "root@94.237.44.223"
-monitor_process = "rws-comfy"
-monitor_port = 80
+# Optional read-only monitoring; set these for your own server.
+# monitor_ssh = "user@server"
+# monitor_process = "rws-comfy"
+# monitor_port = 80
 monitor_interval_ms = 1000

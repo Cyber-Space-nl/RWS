@@ -195,6 +195,9 @@ pub async fn execute(config: WebSocketConfig) -> Result<RunResult> {
         host_header: config.host,
         started_unix_ms,
         settings: RunSettings {
+            warmup_per_connection: None,
+            unique_paths_total: None,
+            unique_paths_used: None,
             connections: config.connections,
             active_percent: config.active_percent,
             idle_duration_secs: config.idle_duration_secs,
