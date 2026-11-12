@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Throughput by benchmark repetition</title>
+  <desc id="desc">RWS and Nginx achieved about 9,900 responses per second in all three repetitions. Apache achieved between 1,271 and 3,088 responses per second.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111c33"/><stop offset="1" stop-color="#07101f"/></linearGradient>
+    <linearGradient id="rws" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#16a34a"/><stop offset="1" stop-color="#4ade80"/></linearGradient>
+    <linearGradient id="nginx" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#60a5fa"/></linearGradient>
+    <linearGradient id="apache" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#ea580c"/><stop offset="1" stop-color="#fb923c"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity=".28"/></filter>
+  </defs>
+  <rect width="960" height="540" rx="24" fill="url(#bg)"/>
+  <circle cx="890" cy="45" r="110" fill="#2563eb" opacity=".08"/><circle cx="65" cy="510" r="140" fill="#22c55e" opacity=".06"/>
+  <text x="48" y="54" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="27" font-weight="700">Throughput by repetition</text>
+  <text x="48" y="82" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">Achieved responses per second · offered ceiling 10,000 RPS</text>
+  <g stroke="#334155" stroke-width="1">
+    <path d="M110 430H910"/><path d="M110 356.2H910"/><path d="M110 282.4H910"/><path d="M110 208.6H910"/><path d="M110 134.8H910"/>
+  </g>
+  <g fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="end">
+    <text x="98" y="435">0</text><text x="98" y="361">2.5k</text><text x="98" y="287">5k</text><text x="98" y="213">7.5k</text><text x="98" y="140">10k</text>
+  </g>
+  <path d="M110 134.8H910" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="7 7" opacity=".75"/>
+  <text x="905" y="126" text-anchor="end" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="12">offered ceiling</text>
+  <g filter="url(#shadow)">
+    <rect x="182" y="136.3" width="34" height="293.7" rx="7" fill="url(#rws)" opacity=".72"/><rect x="222" y="136.2" width="34" height="293.8" rx="7" fill="url(#rws)" opacity=".86"/><rect x="262" y="136.4" width="34" height="293.6" rx="7" fill="url(#rws)"/>
+    <rect x="442" y="137.2" width="34" height="292.8" rx="7" fill="url(#nginx)" opacity=".72"/><rect x="482" y="136.8" width="34" height="293.2" rx="7" fill="url(#nginx)" opacity=".86"/><rect x="522" y="137.4" width="34" height="292.6" rx="7" fill="url(#nginx)"/>
+    <rect x="702" y="338.8" width="34" height="91.2" rx="7" fill="url(#apache)" opacity=".72"/><rect x="742" y="349.6" width="34" height="80.4" rx="7" fill="url(#apache)" opacity=".86"/><rect x="782" y="392.5" width="34" height="37.5" rx="7" fill="url(#apache)"/>
+  </g>
+  <g fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="16" font-weight="700" text-anchor="middle">
+    <text x="239" y="116">9,950</text><text x="499" y="116">9,917</text><text x="759" y="320">2,724</text>
+  </g>
+  <g fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" text-anchor="middle">
+    <text x="239" y="466">RWS</text><text x="499" y="466">Nginx</text><text x="759" y="466">Apache</text>
+  </g>
+  <g fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="12" text-anchor="middle">
+    <text x="239" y="487">median of 3 runs</text><text x="499" y="487">median of 3 runs</text><text x="759" y="487">median of 3 runs</text>
+  </g>
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="12"><circle cx="704" cy="522" r="5" fill="#94a3b8"/><text x="716" y="526" fill="#94a3b8">Bars from left to right: runs 1, 2 and 3</text></g>
+</svg>

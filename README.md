@@ -2,6 +2,34 @@
 
 RSW is an experimental event-driven Linux webserver written in Rust. The workspace contains two server binaries, a shared core library and a WebSocket load-testing tool.
 
+## Benchmark snapshot
+
+RWS, Nginx and Apache were compared on the same 1-vCPU Ubuntu VPS using a byte-identical
+77-byte static file. Each server received three 15-second runs with 1,000 keep-alive connections
+and an offered rate of 10,000 requests/second. The results below were measured on 27 October 2026.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/benchmark/throughput.svg" alt="Throughput by repetition for RWS, Nginx and Apache"></td>
+    <td width="50%"><img src="docs/benchmark/latency.svg" alt="Median latency profile for RWS, Nginx and Apache"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/benchmark/memory.svg" alt="Peak resident memory for RWS, Nginx and Apache"></td>
+    <td width="50%"><img src="docs/benchmark/failures.svg" alt="Failed responses by repetition for RWS, Nginx and Apache"></td>
+  </tr>
+</table>
+
+At this capped workload, RWS and Nginx both sustained more than 99% of the offered rate without
+failed responses. RWS recorded a median p99 latency of **7.10 ms**, compared with **8.19 ms** for
+Nginx. Apache saturated below the offered rate and recorded 250 failed responses across its three
+runs. RWS used substantially more resident memory: **254.7 MiB**, versus **11.9 MiB** for Nginx
+and **95.1 MiB** for Apache.
+
+These measurements describe this specific host and workload; the offered-rate ceiling means they
+do not establish maximum RWS or Nginx throughput. See the
+[full benchmark report](RWS_NGINX_APACHE_BENCHMARK.html) for the environment, individual runs,
+resource data, warnings and interpretation.
+
 ## Workspace components
 
 - **`rsw-core`** — shared library containing configuration, HTTP/WebSocket handling, scheduling, metrics and server lifecycle logic. It is linked into the server binaries and is not installed as a separate service.

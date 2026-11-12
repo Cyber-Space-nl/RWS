@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Median response latency profile</title>
+  <desc id="desc">At p99, RWS measured 7.10 milliseconds, Nginx 8.19 milliseconds and Apache 9.52 milliseconds. Lower is better.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111c33"/><stop offset="1" stop-color="#07101f"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="960" height="540" rx="24" fill="url(#bg)"/>
+  <circle cx="900" cy="40" r="120" fill="#f97316" opacity=".07"/><circle cx="40" cy="520" r="150" fill="#3b82f6" opacity=".06"/>
+  <text x="48" y="54" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="27" font-weight="700">Median latency profile</text>
+  <text x="48" y="82" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">Response latency in milliseconds · lower is better</text>
+  <g stroke="#334155" stroke-width="1">
+    <path d="M110 430H900"/><path d="M110 373.6H900"/><path d="M110 317.3H900"/><path d="M110 260.9H900"/><path d="M110 204.5H900"/><path d="M110 148.2H900"/>
+  </g>
+  <g fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="end">
+    <text x="98" y="435">0</text><text x="98" y="378">2</text><text x="98" y="322">4</text><text x="98" y="266">6</text><text x="98" y="210">8</text><text x="98" y="153">10</text>
+  </g>
+  <g fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" text-anchor="middle"><text x="220" y="465">p50</text><text x="500" y="465">p95</text><text x="780" y="465">p99</text></g>
+  <path d="M220 279.9L500 251.7L780 229.9" fill="none" stroke="#22c55e" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M220 269.7L500 230.8L780 199.2" fill="none" stroke="#3b82f6" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M220 282.1L500 231.4L780 161.7" fill="none" stroke="#f97316" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <g filter="url(#glow)">
+    <g fill="#22c55e"><circle cx="220" cy="279.9" r="7"/><circle cx="500" cy="251.7" r="7"/><circle cx="780" cy="229.9" r="7"/></g>
+    <g fill="#3b82f6"><circle cx="220" cy="269.7" r="7"/><circle cx="500" cy="230.8" r="7"/><circle cx="780" cy="199.2" r="7"/></g>
+    <g fill="#f97316"><circle cx="220" cy="282.1" r="7"/><circle cx="500" cy="231.4" r="7"/><circle cx="780" cy="161.7" r="7"/></g>
+  </g>
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700">
+    <rect x="796" y="214" width="116" height="30" rx="15" fill="#14532d"/><text x="854" y="234" text-anchor="middle" fill="#bbf7d0">RWS 7.10 ms</text>
+    <rect x="796" y="184" width="116" height="30" rx="15" fill="#1e3a8a"/><text x="854" y="204" text-anchor="middle" fill="#dbeafe">Nginx 8.19 ms</text>
+    <rect x="796" y="147" width="116" height="30" rx="15" fill="#7c2d12"/><text x="854" y="167" text-anchor="middle" fill="#ffedd5">Apache 9.52 ms</text>
+  </g>
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="13"><circle cx="320" cy="510" r="6" fill="#22c55e"/><text x="334" y="515" fill="#cbd5e1">RWS</text><circle cx="420" cy="510" r="6" fill="#3b82f6"/><text x="434" y="515" fill="#cbd5e1">Nginx</text><circle cx="535" cy="510" r="6" fill="#f97316"/><text x="549" y="515" fill="#cbd5e1">Apache</text></g>
+</svg>

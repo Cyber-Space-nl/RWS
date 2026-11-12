@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Peak resident memory</title>
+  <desc id="desc">Median peak RSS was 254.7 MiB for RWS, 11.9 MiB for Nginx and 95.1 MiB for Apache.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111c33"/><stop offset="1" stop-color="#07101f"/></linearGradient>
+    <linearGradient id="rws" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#16a34a"/><stop offset="1" stop-color="#4ade80"/></linearGradient>
+    <linearGradient id="nginx" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#60a5fa"/></linearGradient>
+    <linearGradient id="apache" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#ea580c"/><stop offset="1" stop-color="#fb923c"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity=".3"/></filter>
+  </defs>
+  <rect width="960" height="540" rx="24" fill="url(#bg)"/>
+  <circle cx="900" cy="40" r="120" fill="#22c55e" opacity=".07"/><circle cx="30" cy="520" r="150" fill="#f97316" opacity=".05"/>
+  <text x="48" y="54" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="27" font-weight="700">Peak resident memory</text>
+  <text x="48" y="82" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">Median of each run's maximum total process RSS</text>
+  <g stroke="#334155" stroke-width="1"><path d="M110 430H900"/><path d="M110 352.5H900"/><path d="M110 275H900"/><path d="M110 197.5H900"/><path d="M110 120H900"/></g>
+  <g fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="end"><text x="98" y="435">0</text><text x="98" y="357">70</text><text x="98" y="280">140</text><text x="98" y="202">210</text><text x="98" y="125">280 MiB</text></g>
+  <g filter="url(#shadow)"><rect x="174" y="148" width="132" height="282" rx="13" fill="url(#rws)"/><rect x="434" y="416.8" width="132" height="13.2" rx="7" fill="url(#nginx)"/><rect x="694" y="324.8" width="132" height="105.2" rx="13" fill="url(#apache)"/></g>
+  <g fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="20" font-weight="700" text-anchor="middle"><text x="240" y="132">254.7 MiB</text><text x="500" y="400">11.9 MiB</text><text x="760" y="308">95.1 MiB</text></g>
+  <g fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="16" font-weight="600" text-anchor="middle"><text x="240" y="466">RWS</text><text x="500" y="466">Nginx</text><text x="760" y="466">Apache</text></g>
+  <rect x="183" y="495" width="594" height="30" rx="15" fill="#1e293b"/>
+  <text x="480" y="515" text-anchor="middle" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13">Total process measurements · not per-connection allocation deltas</text>
+</svg>

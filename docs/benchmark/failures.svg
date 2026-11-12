@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Failed responses by benchmark repetition</title>
+  <desc id="desc">RWS and Nginx had zero failed responses. Apache had 75, 86 and 89 failed responses in its three repetitions.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111c33"/><stop offset="1" stop-color="#07101f"/></linearGradient>
+    <linearGradient id="apache" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#ea580c"/><stop offset="1" stop-color="#fb923c"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity=".3"/></filter>
+  </defs>
+  <rect width="960" height="540" rx="24" fill="url(#bg)"/>
+  <circle cx="900" cy="40" r="120" fill="#ef4444" opacity=".07"/><circle cx="30" cy="520" r="150" fill="#22c55e" opacity=".05"/>
+  <text x="48" y="54" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="27" font-weight="700">Failed responses by repetition</text>
+  <text x="48" y="82" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">Connection closure or timeout after a connection became usable</text>
+  <g stroke="#334155" stroke-width="1"><path d="M110 430H900"/><path d="M110 352.5H900"/><path d="M110 275H900"/><path d="M110 197.5H900"/><path d="M110 120H900"/></g>
+  <g fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="end"><text x="98" y="435">0</text><text x="98" y="357">25</text><text x="98" y="280">50</text><text x="98" y="202">75</text><text x="98" y="125">100</text></g>
+  <g filter="url(#shadow)"><rect x="702" y="197.5" width="34" height="232.5" rx="7" fill="url(#apache)" opacity=".72"/><rect x="742" y="163.4" width="34" height="266.6" rx="7" fill="url(#apache)" opacity=".86"/><rect x="782" y="154.1" width="34" height="275.9" rx="7" fill="url(#apache)"/></g>
+  <g fill="#22c55e"><circle cx="199" cy="422" r="7"/><circle cx="239" cy="422" r="7"/><circle cx="279" cy="422" r="7"/></g><g fill="#3b82f6"><circle cx="459" cy="422" r="7"/><circle cx="499" cy="422" r="7"/><circle cx="539" cy="422" r="7"/></g>
+  <g fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="18" font-weight="700" text-anchor="middle"><text x="239" y="390">0 · 0 · 0</text><text x="499" y="390">0 · 0 · 0</text><text x="759" y="136">75 · 86 · 89</text></g>
+  <g fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="16" font-weight="600" text-anchor="middle"><text x="239" y="466">RWS</text><text x="499" y="466">Nginx</text><text x="759" y="466">Apache</text></g>
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="13"><circle cx="342" cy="510" r="6" fill="#22c55e"/><text x="356" y="515" fill="#cbd5e1">zero failures</text><circle cx="500" cy="510" r="6" fill="#f97316"/><text x="514" y="515" fill="#cbd5e1">failures observed</text></g>
+</svg>
