@@ -99,7 +99,7 @@ fn percentile(values: &[Duration], percentile: usize) -> Duration {
 
 fn parse_args() -> Result<Options> {
     let mut options = Options {
-        url: "ws://127.0.0.1:8080/_rsw/ws".to_owned(),
+        url: "ws://127.0.0.1:8080/_rws/ws".to_owned(),
         connections: 100,
         messages: 1,
         payload_bytes: 32,
@@ -117,7 +117,7 @@ fn parse_args() -> Result<Options> {
             "--allow-large-test" => options.allow_large_test = true,
             "-h" | "--help" => {
                 println!(
-                    "rsw-ws-load [--url URL] [--connections N] [--messages N] [--payload-bytes N] [--idle-seconds N] [--allow-large-test]"
+                    "rws-ws-load [--url URL] [--connections N] [--messages N] [--payload-bytes N] [--idle-seconds N] [--allow-large-test]"
                 );
                 std::process::exit(0);
             }

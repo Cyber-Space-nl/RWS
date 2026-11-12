@@ -19,7 +19,7 @@ max_entries = 4096
 revalidate_after_ms = 1000
 
 [websocket]
-path = "/_rsw/ws"
+path = "/_rws/ws"
 outbound_queue_messages = 64
 outbound_queue_bytes = 262144
 scheduler_quantum_bytes = 16384
@@ -27,8 +27,8 @@ per_turn_messages = 16
 
 # Uncomment after installing a certificate.
 # [tls]
-# cert_file = "/etc/rsw-simple/tls/fullchain.pem"
-# key_file = "/etc/rsw-simple/tls/privkey.pem"
+# cert_file = "/etc/rws-simple/tls/fullchain.pem"
+# key_file = "/etc/rws-simple/tls/privkey.pem"
 
 [[sites]]
 host = "example.test"
@@ -40,6 +40,6 @@ php_fpm = "unix:/run/php/php8.3-fpm.sock"
 # Send requests for paths that do not exist to this PHP script.
 # front_controller = "index.php"
 # Optional per-site logs. Error logs contain requests with status 4xx or 5xx.
-# access_log = "/var/log/rsw-simple/example.test.access.log"
-# error_log = "/var/log/rsw-simple/example.test.error.log"
+# access_log = "/var/log/rws-simple/example.test.access.log"
+# error_log = "/var/log/rws-simple/example.test.error.log"
 

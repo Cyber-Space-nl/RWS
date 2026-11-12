@@ -102,7 +102,7 @@ pub struct WebSocketConfig {
 impl Default for WebSocketConfig {
     fn default() -> Self {
         Self {
-            path: "/_rsw/ws".to_owned(),
+            path: "/_rws/ws".to_owned(),
             outbound_queue_messages: 64,
             outbound_queue_bytes: 256 * 1024,
             scheduler_quantum_bytes: 16 * 1024,

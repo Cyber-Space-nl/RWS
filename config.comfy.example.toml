@@ -19,7 +19,7 @@ max_entries = 8192
 revalidate_after_ms = 1000
 
 [websocket]
-path = "/_rsw/ws"
+path = "/_rws/ws"
 outbound_queue_messages = 128
 outbound_queue_bytes = 524288
 scheduler_quantum_bytes = 16384
@@ -34,8 +34,8 @@ queue_high_watermark = 128
 
 # Uncomment after installing a certificate.
 # [tls]
-# cert_file = "/etc/rsw-comfy/tls/fullchain.pem"
-# key_file = "/etc/rsw-comfy/tls/privkey.pem"
+# cert_file = "/etc/rws-comfy/tls/fullchain.pem"
+# key_file = "/etc/rws-comfy/tls/privkey.pem"
 
 [[sites]]
 host = "example.test"
@@ -44,8 +44,8 @@ root = "/var/www/example.test/public"
 index = "index.html"
 php = true
 php_fpm = "unix:/run/php/php8.3-fpm.sock"
-access_log = "/var/log/rsw-comfy/example.test.access.log"
-error_log = "/var/log/rsw-comfy/example.test.error.log"
+access_log = "/var/log/rws-comfy/example.test.access.log"
+error_log = "/var/log/rws-comfy/example.test.error.log"
 
 # Comfy-only reverse proxy example:
 # [[sites]]

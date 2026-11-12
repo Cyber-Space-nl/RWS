@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "label": "websocket-smoke",
-  "target": "ws://127.0.0.1:18080/_rsw/ws",
+  "target": "ws://127.0.0.1:18080/_rws/ws",
   "host_header": "localhost",
   "started_unix_ms": 1793112068676,
   "settings": {

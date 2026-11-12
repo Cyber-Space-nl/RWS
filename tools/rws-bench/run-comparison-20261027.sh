@@ -53,7 +53,7 @@ run_one() {
     case "$server" in
         rws)
             port=80
-            process=rsw-simple
+            process=rws-simple
             ;;
         nginx)
             port=18081

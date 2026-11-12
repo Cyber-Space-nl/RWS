@@ -6,13 +6,13 @@
 capacity claims when the requested connection count was not reached, generator resources were
 insufficient, response framing differed, or the offered rate could not be sustained.
 
-The current RSW scheduler is a ready-only deficit-round-robin queue for outbound native WebSocket
+The current RWS scheduler is a ready-only deficit-round-robin queue for outbound native WebSocket
 messages. The adaptive controller changes its byte quantum from queue depth. It does not schedule
 ordinary HTTP connections. Consequently:
 
 - HTTP idle/mixed/overload tests compare the general server stacks.
-- Scheduler-on/off claims require an identical WebSocket workload on `rsw-comfy`.
-- `rsw-simple` cannot be described as “adaptive off”; it is a different build/feature set.
+- Scheduler-on/off claims require an identical WebSocket workload on `rws-comfy`.
+- `rws-simple` cannot be described as “adaptive off”; it is a different build/feature set.
 
 ## Runtime architecture
 
@@ -74,7 +74,7 @@ tool has no credential fields.
 ## Test-VPS preflight observed 27 October 2026
 
 Read-only inspection of `94.237.44.223` found 1 vCPU, approximately 1.8 GiB RAM, shell fd soft
-limit 1,024, RSW process fd limit 262,144, ephemeral ports 32768-60999, `somaxconn=4096`, and
-`tcp_max_syn_backlog=128`. RSW listens on 80/443 and Nginx on 18081. Both return the same 77-byte
+limit 1,024, RWS process fd limit 262,144, ephemeral ports 32768-60999, `somaxconn=4096`, and
+`tcp_max_syn_backlog=128`. RWS listens on 80/443 and Nginx on 18081. Both return the same 77-byte
 benchmark body and matching content type/length/security header. Nginx has no explicit benchmark
 keep-alive timeout, so the current configuration is not valid for a ten-minute idle run.

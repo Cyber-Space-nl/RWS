@@ -65,7 +65,7 @@ Approved remote run with read-only server monitoring:
 rws-bench run \
   --config tools/rws-bench/example.toml \
   --monitor-ssh root@94.237.44.223 \
-  --monitor-process rsw-comfy \
+  --monitor-process rws-comfy \
   --monitor-port 80 \
   --output rws-adaptive-on-run1.json
 ```
@@ -89,7 +89,7 @@ variants):
 
 ```bash
 rws-bench websocket \
-  --url ws://94.237.44.223/_rsw/ws \
+  --url ws://94.237.44.223/_rws/ws \
   --host bench.local \
   --label rws-adaptive-on \
   --connections 100 \
@@ -108,7 +108,7 @@ rws-bench websocket \
 - **Overload/recovery:** run an explicitly reviewed series of increasing/decreasing `rps` values;
   preserve every JSON file. Automated public-IP ramping is intentionally not hidden behind one
   command.
-- **Adaptive scheduler:** use the `websocket` command against `rsw-comfy` and change only
+- **Adaptive scheduler:** use the `websocket` command against `rws-comfy` and change only
   `[adaptive].enabled` between otherwise identical workloads. The current adaptive controller
   affects native WebSocket output, not static HTTP, so an HTTP comparison cannot establish
   scheduler benefit.

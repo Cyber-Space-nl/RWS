@@ -1,4 +1,4 @@
-/var/log/rsw-comfy/*.log {
+/var/log/rws-simple/*.log {
     daily
     rotate 14
     compress
@@ -6,5 +6,5 @@
     missingok
     notifempty
     copytruncate
-    su rsw rsw
+    su rws rws
 }

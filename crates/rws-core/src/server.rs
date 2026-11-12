@@ -253,7 +253,7 @@ async fn metrics_handler(State(state): State<AppState>) -> Response {
 fn add_server_header(response: &mut Response) {
     response
         .headers_mut()
-        .insert(header::SERVER, HeaderValue::from_static("RSW"));
+        .insert(header::SERVER, HeaderValue::from_static("RWS"));
 }
 
 struct RequestLogInfo {
@@ -929,10 +929,10 @@ mod tests {
     }
 
     #[test]
-    fn adds_rsw_server_header() {
+    fn adds_rws_server_header() {
         let mut response = StatusCode::NO_CONTENT.into_response();
         add_server_header(&mut response);
-        assert_eq!(response.headers().get(header::SERVER).unwrap(), "RSW");
+        assert_eq!(response.headers().get(header::SERVER).unwrap(), "RWS");
     }
 
     #[tokio::test]

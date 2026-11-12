@@ -12,7 +12,7 @@ if (( available_threads < max_threads )); then max_threads=$available_threads; f
 command -v wrk >/dev/null || { echo "Install wrk first: apt install -y wrk" >&2; exit 1; }
 curl -fsS -H "Host: $host" "$url" >/dev/null
 
-pid=$(systemctl show rsw-simple --property MainPID --value 2>/dev/null || true)
+pid=$(systemctl show rws-simple --property MainPID --value 2>/dev/null || true)
 echo "url=$url"
 echo "host=$host"
 echo "label=$label"

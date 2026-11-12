@@ -11,6 +11,6 @@ request_timeout_ms = 10000
 source_ips = []
 allow_large_test = false
 monitor_ssh = "root@94.237.44.223"
-monitor_process = "rsw-comfy"
+monitor_process = "rws-comfy"
 monitor_port = 80
 monitor_interval_ms = 1000

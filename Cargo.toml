@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "crates/rsw-core",
-    "crates/rsw-simple",
-    "crates/rsw-comfy",
-    "tools/rsw-ws-load",
+    "crates/rws-core",
+    "crates/rws-simple",
+    "crates/rws-comfy",
+    "tools/rws-ws-load",
     "tools/rws-bench",
 ]
 resolver = "2"

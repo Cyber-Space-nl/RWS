@@ -22,15 +22,15 @@ pub enum Flavor {
 impl Flavor {
     fn binary(self) -> &'static str {
         match self {
-            Self::Simple => "rsw-simple",
-            Self::Comfy => "rsw-comfy",
+            Self::Simple => "rws-simple",
+            Self::Comfy => "rws-comfy",
         }
     }
 
     fn default_config(self) -> &'static str {
         match self {
-            Self::Simple => "/etc/rsw-simple/config.toml",
-            Self::Comfy => "/etc/rsw-comfy/config.toml",
+            Self::Simple => "/etc/rws-simple/config.toml",
+            Self::Comfy => "/etc/rws-comfy/config.toml",
         }
     }
 }
@@ -38,7 +38,7 @@ impl Flavor {
 pub async fn run(flavor: Flavor) -> Result<()> {
     #[cfg(not(feature = "comfy"))]
     if flavor == Flavor::Comfy {
-        bail!("rsw-comfy requires the comfy build feature");
+        bail!("rws-comfy requires the comfy build feature");
     }
 
     let mut config_path = PathBuf::from(flavor.default_config());
@@ -78,7 +78,7 @@ pub async fn run(flavor: Flavor) -> Result<()> {
 
 fn init_tracing(json: bool) -> Result<()> {
     let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("rsw_core=info,info"));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("rws_core=info,info"));
     if json {
         tracing_subscriber::fmt()
             .with_env_filter(filter)

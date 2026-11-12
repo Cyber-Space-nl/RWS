@@ -1,5 +1,5 @@
 [package]
-name = "rsw-ws-load"
+name = "rws-ws-load"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

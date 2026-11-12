@@ -1348,59 +1348,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsw-comfy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rsw-core",
- "tokio",
-]
-
-[[package]]
-name = "rsw-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "axum-server",
- "bytes",
- "fastcgi-client",
- "futures-util",
- "http",
- "mime_guess",
- "percent-encoding",
- "reqwest",
- "serde",
- "socket2",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "tower",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rsw-simple"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rsw-core",
- "tokio",
-]
-
-[[package]]
-name = "rsw-ws-load"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "tokio",
- "tokio-tungstenite 0.30.0",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1479,6 +1426,59 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "toml",
  "url",
+]
+
+[[package]]
+name = "rws-comfy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rws-core",
+ "tokio",
+]
+
+[[package]]
+name = "rws-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-server",
+ "bytes",
+ "fastcgi-client",
+ "futures-util",
+ "http",
+ "mime_guess",
+ "percent-encoding",
+ "reqwest",
+ "serde",
+ "socket2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rws-simple"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rws-core",
+ "tokio",
+]
+
+[[package]]
+name = "rws-ws-load"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
 ]
 
 [[package]]

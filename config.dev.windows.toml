@@ -11,7 +11,7 @@ json_logs = false
 listen = "127.0.0.1:19091"
 
 [websocket]
-path = "/_rsw/ws"
+path = "/_rws/ws"
 outbound_queue_messages = 8
 outbound_queue_bytes = 65536
 scheduler_quantum_bytes = 4096

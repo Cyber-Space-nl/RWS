@@ -1,19 +1,19 @@
 [Unit]
-Description=Rust WebServer Comfy
-Documentation=file:/usr/share/doc/rsw-comfy/README.md
+Description=Rust WebServer Simple
+Documentation=file:/usr/share/doc/rws-simple/README.md
 After=network-online.target php8.3-fpm.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=rsw
-Group=rsw
-ExecStart=/usr/local/bin/rsw-comfy --config /etc/rsw-comfy/config.toml
+User=rws
+Group=rws
+ExecStart=/usr/local/bin/rws-simple --config /etc/rws-simple/config.toml
 Restart=on-failure
 RestartSec=2s
-TimeoutStopSec=25s
+TimeoutStopSec=20s
 LimitNOFILE=262144
-LogsDirectory=rsw-comfy
+LogsDirectory=rws-simple
 LogsDirectoryMode=0750
 NoNewPrivileges=true
 PrivateTmp=true

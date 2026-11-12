@@ -39,10 +39,10 @@ warnings and raw measurements.
 
 ## Workspace components
 
-- **`rsw-core`** — shared library containing configuration, HTTP/WebSocket handling, scheduling, metrics and server lifecycle logic. It is linked into the server binaries and is not installed as a separate service.
-- **`rsw-simple`** — the default lightweight server binary, with a strict configuration surface and minimal enabled functionality.
-- **`rsw-comfy`** — the extended server binary, with reverse proxy support and optional adaptive scheduler tuning.
-- **`rsw-ws-load`** — development tool that creates concurrent WebSocket connections and messages to measure behavior, performance and stability. It is not a production service.
+- **`rws-core`** — shared library containing configuration, HTTP/WebSocket handling, scheduling, metrics and server lifecycle logic. It is linked into the server binaries and is not installed as a separate service.
+- **`rws-simple`** — the default lightweight server binary, with a strict configuration surface and minimal enabled functionality.
+- **`rws-comfy`** — the extended server binary, with reverse proxy support and optional adaptive scheduler tuning.
+- **`rws-ws-load`** — development tool that creates concurrent WebSocket connections and messages to measure behavior, performance and stability. It is not a production service.
 - **`rws-bench`** — guarded native Linux HTTP/1.1 keep-alive scalability benchmark with
   resource checks, SSH monitoring, raw JSON and deterministic Markdown comparison reports.
 
@@ -85,9 +85,10 @@ This is an MVP for correctness testing and performance measurement. It is not ye
 - Metrics are counters/gauges only; latency histograms are still pending.
 - The 2 MB idle RSS figure is an optimization goal, not a hard limit or acceptance criterion.
 
-## Latest validated deployment
+## Validation and deployment status
 
-The optimized `rsw-simple` build was deployed and validated on 27 October 2026 on the project VPS:
+The server build available at the time was deployed and validated on 27 October 2026 on the
+project VPS:
 
 - RWS is active on ports 80 and 443; Nginx remains isolated on benchmark port 18081.
 - The production site returns HTTP 200 and the benchmark file returns the expected 77-byte body.
@@ -99,8 +100,13 @@ The optimized `rsw-simple` build was deployed and validated on 27 October 2026 o
   `8104bb0910485098a4990b085c5ee56003029e1305ed6d2603b4c34c13225508`.
 - The final smoke check recorded 20 cache hits and one miss, with no bypasses, evictions,
   invalidations or service errors.
-- The last complete local and Linux validation passed all 29 workspace tests and Clippy with
-  warnings treated as errors.
+- The current `rws-*` naming release has not been redeployed by this repository-only rename.
+
+The current release passed all 38 workspace tests and Clippy with warnings treated as errors on
+Windows. Linux validation built `rws-simple`, `rws-comfy`, `rws-ws-load` and `rws-bench` in release
+mode. The smoke test verified static HTTP `200`, unknown-host `421`, health, 20 WebSocket
+connections, 100 echoed messages with no errors, zero remaining open WebSockets and clean
+shutdown. The standalone Linux `rws-bench` binary was rebuilt and its checksum updated.
 
 The latest externally measured optimized-cache result, taken after the first four hot-path
 optimizations but before the final 5-10 deployment, was **57,927.69 requests/second** at four wrk
@@ -130,9 +136,9 @@ cargo fmt --check
 cargo test --workspace
 ./scripts/build-linux.sh simple
 sudo ./scripts/install-simple.sh
-sudoedit /etc/rsw-simple/config.toml
-sudo /usr/local/bin/rsw-simple --config /etc/rsw-simple/config.toml --check
-sudo systemctl enable --now rsw-simple
+sudoedit /etc/rws-simple/config.toml
+sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
+sudo systemctl enable --now rws-simple
 ```
 
 Test the default example vhost:
@@ -141,7 +147,7 @@ Test the default example vhost:
 curl -i -H 'Host: example.test' http://127.0.0.1:8080/
 curl -i http://127.0.0.1:9091/healthz
 curl -s http://127.0.0.1:9091/metrics
-sudo journalctl -u rsw-simple -f
+sudo journalctl -u rws-simple -f
 ```
 
 To enable the PHP sample:
@@ -159,15 +165,15 @@ find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' -print
 
 ## Comfy installation
 
-`rsw-comfy` is installed independently. Stop Simple first if both configs use the same ports:
+`rws-comfy` is installed independently. Stop Simple first if both configs use the same ports:
 
 ```bash
 ./scripts/build-linux.sh comfy
 sudo ./scripts/install-comfy.sh
-sudoedit /etc/rsw-comfy/config.toml
-sudo /usr/local/bin/rsw-comfy --config /etc/rsw-comfy/config.toml --check
-sudo systemctl disable --now rsw-simple 2>/dev/null || true
-sudo systemctl enable --now rsw-comfy
+sudoedit /etc/rws-comfy/config.toml
+sudo /usr/local/bin/rws-comfy --config /etc/rws-comfy/config.toml --check
+sudo systemctl disable --now rws-simple 2>/dev/null || true
+sudo systemctl enable --now rws-comfy
 ```
 
 ## TLS
@@ -176,16 +182,16 @@ Place certificate files in the selected variant's `tls` directory, enable the `[
 
 ```toml
 [tls]
-cert_file = "/etc/rsw-simple/tls/fullchain.pem"
-key_file = "/etc/rsw-simple/tls/privkey.pem"
+cert_file = "/etc/rws-simple/tls/fullchain.pem"
+key_file = "/etc/rws-simple/tls/privkey.pem"
 ```
 
 ```bash
-sudo /usr/local/bin/rsw-simple --config /etc/rsw-simple/config.toml --check
-sudo systemctl restart rsw-simple
+sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
+sudo systemctl restart rws-simple
 ```
 
-RWS does not issue certificates in this MVP. Use an external ACME client and ensure the `rsw` service account can read the deployed key through an appropriately restricted group or copied file.
+RWS does not issue certificates in this MVP. Use an external ACME client and ensure the `rws` service account can read the deployed key through an appropriately restricted group or copied file.
 
 ## Configuration
 
@@ -226,11 +232,11 @@ listen_backlog = 1024
 ```
 
 Set `enabled = false` for uncached comparison runs. Cache behavior is exported as
-`rsw_static_cache_hits_total`, `rsw_static_cache_misses_total`,
-`rsw_static_cache_bypasses_total`, `rsw_static_cache_evictions_total`,
-`rsw_static_cache_invalidations_total`, `rsw_static_cache_revalidations_total`,
-`rsw_static_cache_entries` and
-`rsw_static_cache_bytes` on the metrics listener.
+`rws_static_cache_hits_total`, `rws_static_cache_misses_total`,
+`rws_static_cache_bypasses_total`, `rws_static_cache_evictions_total`,
+`rws_static_cache_invalidations_total`, `rws_static_cache_revalidations_total`,
+`rws_static_cache_entries` and
+`rws_static_cache_bytes` on the metrics listener.
 
 PHP endpoints use one of these forms:
 
@@ -238,8 +244,8 @@ PHP endpoints use one of these forms:
 php_fpm = "unix:/run/php/php8.3-fpm.sock"
 # Optional fallback for application routes such as /login:
 front_controller = "index.php"
-access_log = "/var/log/rsw-simple/example.test.access.log"
-error_log = "/var/log/rsw-simple/example.test.error.log"
+access_log = "/var/log/rws-simple/example.test.access.log"
+error_log = "/var/log/rws-simple/example.test.error.log"
 # or
 php_fpm = "tcp:127.0.0.1:9000"
 ```
@@ -263,8 +269,8 @@ upstream = "http://127.0.0.1:3000"
 Add `example.test` to DNS or `/etc/hosts`, then:
 
 ```bash
-cargo run -p rsw-ws-load -- \
-  --url ws://example.test:8080/_rsw/ws \
+cargo run -p rws-ws-load -- \
+  --url ws://example.test:8080/_rws/ws \
   --connections 1000 \
   --messages 10 \
   --payload-bytes 128 \
@@ -279,11 +285,11 @@ Build and run the installed configuration as a non-production test:
 
 ```bash
 ./scripts/build-linux.sh simple
-./scripts/measure-linux.sh ./target/release/rsw-simple /etc/rsw-simple/config.toml
+./scripts/measure-linux.sh ./target/release/rws-simple /etc/rws-simple/config.toml
 ```
 
 For a host-specific production binary, build on the target VPS with
-`RSW_NATIVE_CPU=1 ./scripts/build-linux.sh simple`. Release builds use fat LTO. A native build may
+`RWS_NATIVE_CPU=1 ./scripts/build-linux.sh simple`. Release builds use fat LTO. A native build may
 not run on an older or different CPU, so keep the portable rollback binary.
 
 Profile-guided optimization (PGO) is not enabled. It should only be added with a representative
@@ -306,9 +312,9 @@ the server for CPU. Benchmark static HTTP, TLS, PHP and WebSockets separately.
 The installers back up an existing binary and unit with a timestamp. They preserve existing configuration. To roll back, stop the service, restore the selected `.backup.TIMESTAMP` files and restart.
 
 ```bash
-sudo systemctl stop rsw-simple
-sudo cp -a /usr/local/bin/rsw-simple.backup.TIMESTAMP /usr/local/bin/rsw-simple
-sudo systemctl start rsw-simple
+sudo systemctl stop rws-simple
+sudo cp -a /usr/local/bin/rws-simple.backup.TIMESTAMP /usr/local/bin/rws-simple
+sudo systemctl start rws-simple
 ```
 
 ## Uninstall
@@ -319,7 +325,7 @@ sudo ./scripts/uninstall.sh simple
 sudo ./scripts/uninstall.sh comfy
 ```
 
-The uninstall script preserves `/etc/rsw-*` and `/var/www` data.
+The uninstall script preserves `/etc/rws-*` and `/var/www` data.
 
 ## Developer checks
 
@@ -328,10 +334,10 @@ cargo fmt --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo build --release -p rsw-simple
-cargo build --release -p rsw-comfy
-cargo tree -p rsw-simple -e features
-cargo tree -p rsw-comfy -e features
+cargo build --release -p rws-simple
+cargo build --release -p rws-comfy
+cargo tree -p rws-simple -e features
+cargo tree -p rws-comfy -e features
 ```
 
 Build each release package separately when comparing dependencies and binary sizes so Cargo feature unification cannot distort the comparison.
