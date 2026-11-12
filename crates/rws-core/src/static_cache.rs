@@ -10,6 +10,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileFingerprint {
@@ -177,18 +178,19 @@ impl StaticCache {
         site_id: usize,
         request_path: &str,
         path: &Path,
+        mut file: tokio::fs::File,
         metadata: &std::fs::Metadata,
     ) -> std::io::Result<CachedAsset> {
         if !self.config.enabled {
-            return self.bypass(path).await;
+            return self.bypass(path, &mut file, metadata.len()).await;
         }
         let Some(mut fingerprint) = FileFingerprint::from_metadata(metadata) else {
-            return self.bypass(path).await;
+            return self.bypass(path, &mut file, metadata.len()).await;
         };
         let mut counted_miss = false;
         for attempt in 0..2 {
             if !self.cacheable_size(fingerprint.length) {
-                return self.bypass(path).await;
+                return self.bypass(path, &mut file, metadata.len()).await;
             }
             if let Some(asset) = self.lookup_validated(site_id, request_path, fingerprint) {
                 return Ok(asset);
@@ -200,8 +202,17 @@ impl StaticCache {
                 counted_miss = true;
             }
 
-            let body = Bytes::from(tokio::fs::read(path).await?);
-            let after = tokio::fs::metadata(path).await?;
+            file.rewind().await?;
+            let mut data = Vec::new();
+            (&mut file)
+                .take(fingerprint.length.saturating_add(1))
+                .read_to_end(&mut data)
+                .await?;
+            if data.len() as u64 > fingerprint.length {
+                return Err(std::io::Error::other("file grew during cache read"));
+            }
+            let body = Bytes::from(data);
+            let after = file.metadata().await?;
             let after_fingerprint = FileFingerprint::from_metadata(&after);
             if after_fingerprint == Some(fingerprint) && body.len() as u64 == fingerprint.length {
                 let asset = CachedAsset::new(path, body);
@@ -266,9 +277,22 @@ impl StaticCache {
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    async fn bypass(&self, path: &Path) -> std::io::Result<CachedAsset> {
+    async fn bypass(
+        &self,
+        path: &Path,
+        file: &mut tokio::fs::File,
+        length: u64,
+    ) -> std::io::Result<CachedAsset> {
         self.record_bypass();
-        let body = Bytes::from(tokio::fs::read(path).await?);
+        let mut data = Vec::new();
+        file.rewind().await?;
+        file.take(length.saturating_add(1))
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() as u64 > length {
+            return Err(std::io::Error::other("file grew during read"));
+        }
+        let body = Bytes::from(data);
         Ok(CachedAsset::new(path, body))
     }
 
@@ -476,8 +500,12 @@ mod tests {
     }
 
     async fn load(cache: &StaticCache, key: &str, path: &Path) -> CachedAsset {
-        let metadata = tokio::fs::metadata(path).await.unwrap();
-        cache.get_or_load(0, key, path, &metadata).await.unwrap()
+        let file = tokio::fs::File::open(path).await.unwrap();
+        let metadata = file.metadata().await.unwrap();
+        cache
+            .get_or_load(0, key, path, file, &metadata)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -608,6 +636,23 @@ mod tests {
             1
         );
         assert_eq!(metrics.static_cache_entries.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn rejects_file_that_grows_after_metadata_is_read() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("asset.txt");
+        std::fs::write(&path, "small").unwrap();
+        let file = tokio::fs::File::open(&path).await.unwrap();
+        let metadata = file.metadata().await.unwrap();
+        std::fs::write(&path, "a much larger file").unwrap();
+        let cache = StaticCache::new(StaticCacheConfig::default(), Arc::new(Metrics::default()));
+        assert!(
+            cache
+                .get_or_load(0, "/asset.txt", &path, file, &metadata)
+                .await
+                .is_err()
+        );
     }
 
     #[test]

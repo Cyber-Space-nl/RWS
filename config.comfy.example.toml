@@ -4,6 +4,7 @@ https_listen = "0.0.0.0:8443"
 max_in_flight_requests = 2048
 listen_backlog = 2048
 max_body_bytes = 16777216
+max_proxy_response_bytes = 16777216
 request_timeout_ms = 30000
 shutdown_grace_period_s = 20
 json_logs = true

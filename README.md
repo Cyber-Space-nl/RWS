@@ -81,8 +81,14 @@ This is an MVP for correctness testing and performance measurement. It is not ye
 - One TLS certificate/key pair per process; per-SNI certificates are not implemented yet.
 - Static range requests, conditional requests, response compression and directory listings are
   not implemented. The in-memory cache does not add browser/CDN cache-control headers.
+- Site roots and their parent directories must not be writable by untrusted users. PHP-FPM opens
+  scripts separately from RWS, and non-Linux builds do not have race-resistant contained opens.
+- Linux static-file containment uses `openat2` (Linux 5.6 or newer); requests fail closed if it is unavailable.
+- `request_timeout_ms` does not limit HTTP header-read time. Protect public deployments with an
+  appropriately configured front-end until a header deadline is implemented.
 - PHP routing supports direct `.php` script paths and an optional per-site front-controller fallback; PATH_INFO is not implemented.
-- Comfy HTTP proxy buffers request and response bodies up to configured limits and does not proxy WebSocket upgrades.
+- Comfy HTTP proxy buffers request and response bodies up to `max_body_bytes` and `max_proxy_response_bytes`, respectively, and does not proxy WebSocket upgrades. The latter defaults to 8 MiB; oversized upstream responses return 502. These limits are per request, not global process memory limits.
+- The proxy strips client-supplied `Forwarded`, `X-Forwarded-*` and `X-Real-IP` headers; it does not currently generate trusted forwarding headers. Backends must not rely on them for client identity.
 - The scheduler currently governs native WebSocket outbound application messages; it does not replace Tokio or kernel scheduling.
 - Metrics are counters/gauges only; latency histograms are still pending.
 - The 2 MB idle RSS figure is an optimization goal, not a hard limit or acceptance criterion.

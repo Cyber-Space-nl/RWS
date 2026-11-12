@@ -29,6 +29,9 @@ tower = { version = "0.5", features = ["limit", "timeout"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.6", features = ["fs"] }
+
 [dev-dependencies]
 tempfile = "3.20"
 

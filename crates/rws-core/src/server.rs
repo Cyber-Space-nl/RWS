@@ -459,14 +459,22 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     } else {
         if state.static_cache.should_stream(target.metadata.len()) {
             state.static_cache.record_bypass();
-            return match streamed_file_response(&target.path, target.metadata.len()).await {
+            return match streamed_file_response(target.file, &target.path, target.metadata.len())
+                .await
+            {
                 Ok(response) => response,
                 Err(error) => static_read_error(site, &target.path, error),
             };
         }
         match state
             .static_cache
-            .get_or_load(site.id, &request_path, &target.path, &target.metadata)
+            .get_or_load(
+                site.id,
+                &request_path,
+                &target.path,
+                target.file,
+                &target.metadata,
+            )
             .await
         {
             Ok(asset) => return cached_response(asset, false),
@@ -493,8 +501,11 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     response
 }
 
-async fn streamed_file_response(path: &Path, length: u64) -> std::io::Result<Response> {
-    let file = tokio::fs::File::open(path).await?;
+async fn streamed_file_response(
+    file: tokio::fs::File,
+    path: &Path,
+    length: u64,
+) -> std::io::Result<Response> {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let mut response = Response::new(Body::from_stream(ReaderStream::new(file)));
     response.headers_mut().insert(
@@ -535,6 +546,7 @@ fn cached_response(asset: CachedAsset, is_head: bool) -> Response {
 struct ResolvedTarget {
     path: PathBuf,
     metadata: std::fs::Metadata,
+    file: tokio::fs::File,
 }
 
 fn static_read_error(site: &Site, target: &Path, error: std::io::Error) -> Response {
@@ -582,10 +594,47 @@ async fn resolve_target(
     if !canonical.starts_with(root) || !metadata.is_file() {
         return Err(StatusCode::FORBIDDEN);
     }
+    let relative = canonical
+        .strip_prefix(root)
+        .map_err(|_| StatusCode::FORBIDDEN)?;
+    let file = open_contained(root, relative)
+        .await
+        .map_err(|_| StatusCode::FORBIDDEN)?;
+    let metadata = file.metadata().await.map_err(|_| StatusCode::NOT_FOUND)?;
+    if !metadata.is_file() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     Ok(ResolvedTarget {
         path: canonical,
         metadata,
+        file,
     })
+}
+
+#[cfg(target_os = "linux")]
+async fn open_contained(root: &Path, relative: &Path) -> std::io::Result<tokio::fs::File> {
+    let root = root.to_owned();
+    let relative = relative.to_owned();
+    let file = tokio::task::spawn_blocking(move || {
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        let directory = std::fs::File::open(root)?;
+        let fd = openat2(
+            &directory,
+            relative.as_path(),
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        )?;
+        Ok::<std::fs::File, std::io::Error>(fd.into())
+    })
+    .await
+    .map_err(std::io::Error::other)??;
+    Ok(tokio::fs::File::from_std(file))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn open_contained(root: &Path, relative: &Path) -> std::io::Result<tokio::fs::File> {
+    tokio::fs::File::open(root.join(relative)).await
 }
 
 fn validated_request_path(request_path: &str) -> Result<std::borrow::Cow<'_, str>, StatusCode> {
@@ -777,6 +826,7 @@ async fn websocket_session(state: AppState, socket: axum::extract::ws::WebSocket
         }
     }
     state.scheduler.unregister(id).await;
+    writer.abort();
     let _ = writer.await;
     state
         .metrics
@@ -796,13 +846,25 @@ async fn proxy_request(state: &AppState, site: &Site, request: Request) -> Respo
         .unwrap_or("/");
     let url = format!("{}{}", upstream.trim_end_matches('/'), path);
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, state.config.server.max_body_bytes).await {
-        Ok(body) => body,
-        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response(),
+    let body = match tokio::time::timeout(
+        state.config.request_timeout(),
+        to_bytes(body, state.config.server.max_body_bytes),
+    )
+    .await
+    {
+        Ok(Ok(body)) => body,
+        Ok(Err(_)) => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response();
+        }
+        Err(_) => return (StatusCode::REQUEST_TIMEOUT, "request body timeout").into_response(),
     };
     let mut outgoing = state.proxy_client.request(parts.method, url).body(body);
     for (name, value) in &parts.headers {
-        if !is_hop_by_hop(name) && *name != header::HOST {
+        if !is_hop_by_hop(name)
+            && !connection_names_header(&parts.headers, name)
+            && *name != header::HOST
+            && !is_untrusted_forwarding_header(name)
+        {
             outgoing = outgoing.header(name, value);
         }
     }
@@ -816,18 +878,50 @@ async fn proxy_request(state: &AppState, site: &Site, request: Request) -> Respo
     };
     let status = upstream_response.status();
     let headers = upstream_response.headers().clone();
-    let body = match upstream_response.bytes().await {
-        Ok(body) => body,
-        Err(_) => return (StatusCode::BAD_GATEWAY, "invalid upstream response").into_response(),
-    };
-    let mut response = Response::new(Body::from(body));
+    let limit = state.config.server.max_proxy_response_bytes;
+    if upstream_response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return (StatusCode::BAD_GATEWAY, "upstream response too large").into_response();
+    }
+    let mut stream = upstream_response.bytes_stream();
+    let mut body = bytes::BytesMut::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                return (StatusCode::BAD_GATEWAY, "invalid upstream response").into_response();
+            }
+        };
+        if chunk.len() > limit.saturating_sub(body.len()) {
+            return (StatusCode::BAD_GATEWAY, "upstream response too large").into_response();
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let mut response = Response::new(Body::from(body.freeze()));
     *response.status_mut() = status;
     for (name, value) in &headers {
-        if !is_hop_by_hop(name) {
-            response.headers_mut().insert(name, value.clone());
+        if !is_hop_by_hop(name) && !connection_names_header(&headers, name) {
+            response.headers_mut().append(name, value.clone());
         }
     }
     response
+}
+
+#[cfg(feature = "comfy")]
+fn connection_names_header(headers: &HeaderMap, name: &axum::http::HeaderName) -> bool {
+    headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case(name.as_str()))
+}
+
+#[cfg(feature = "comfy")]
+fn is_untrusted_forwarding_header(name: &axum::http::HeaderName) -> bool {
+    name.as_str().starts_with("x-forwarded-") || matches!(name.as_str(), "forwarded" | "x-real-ip")
 }
 
 #[cfg(feature = "comfy")]
@@ -858,6 +952,121 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(feature = "comfy")]
+    #[tokio::test]
+    async fn proxy_limits_upstream_responses_and_strips_untrusted_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().fallback(any(|headers: HeaderMap| async move {
+            if headers.contains_key("x-forwarded-for") || headers.contains_key("x-private") {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "forwarded").into_response();
+            }
+            let body = Body::from_stream(futures_util::stream::iter([
+                Ok::<_, std::io::Error>(Bytes::from_static(b"123")),
+                Ok(Bytes::from_static(b"456")),
+            ]));
+            let mut response = Response::new(body);
+            response
+                .headers_mut()
+                .insert(header::CONNECTION, HeaderValue::from_static("x-secret"));
+            response
+                .headers_mut()
+                .insert("x-secret", HeaderValue::from_static("hidden"));
+            response
+        }));
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config: Config = toml::from_str(&format!(
+            "[server]\nmax_proxy_response_bytes=5\n[[sites]]\nhost='example.test'\nmode='proxy'\nupstream='http://{addr}'\n"
+        )).unwrap();
+        config.validate().unwrap();
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let request = || {
+            Request::builder()
+                .uri("/")
+                .header("x-forwarded-for", "spoofed")
+                .header(header::CONNECTION, "x-private")
+                .header("x-private", "secret")
+                .body(Body::empty())
+                .unwrap()
+        };
+        assert_eq!(
+            proxy_request(&state, site, request()).await.status(),
+            StatusCode::BAD_GATEWAY
+        );
+
+        let mut config = (*state.config).clone();
+        config.server.max_proxy_response_bytes = 6;
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let response = proxy_request(&state, site, request()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key("x-secret"));
+        assert_eq!(to_bytes(response.into_body(), 6).await.unwrap(), "123456");
+        task.abort();
+    }
+
+    #[cfg(feature = "comfy")]
+    #[tokio::test]
+    async fn proxy_times_out_slow_request_body() {
+        let config: Config = toml::from_str(
+            "[server]\nrequest_timeout_ms=20\n[[sites]]\nhost='example.test'\nmode='proxy'\nupstream='http://127.0.0.1:9'\n",
+        ).unwrap();
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let body =
+            Body::from_stream(futures_util::stream::pending::<Result<Bytes, std::io::Error>>());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .body(body)
+            .unwrap();
+        assert_eq!(
+            proxy_request(&state, site, request).await.status(),
+            StatusCode::REQUEST_TIMEOUT
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlink_pointing_outside_site_root() {
+        use std::os::unix::fs::symlink;
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "secret").unwrap();
+        symlink(outside.path().join("secret"), root.path().join("link")).unwrap();
+        assert!(matches!(
+            resolve_target(&root.path().canonicalize().unwrap(), "/link", "index.html").await,
+            Err(StatusCode::FORBIDDEN)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn contained_open_rejects_replacement_symlink_and_keeps_open_file_stable() {
+        use std::os::unix::fs::symlink;
+        use tokio::io::AsyncReadExt;
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let file_path = root.path().join("asset.txt");
+        let secret = outside.path().join("secret.txt");
+        std::fs::write(&file_path, "public").unwrap();
+        std::fs::write(&secret, "secret").unwrap();
+        let mut file = open_contained(root.path(), Path::new("asset.txt"))
+            .await
+            .unwrap();
+        std::fs::remove_file(&file_path).unwrap();
+        symlink(&secret, &file_path).unwrap();
+        assert!(
+            open_contained(root.path(), Path::new("asset.txt"))
+                .await
+                .is_err()
+        );
+        let mut body = String::new();
+        file.read_to_string(&mut body).await.unwrap();
+        assert_eq!(body, "public");
+    }
+
     fn test_state(config: Config) -> AppState {
         let sites = build_sites(&config).unwrap();
         let config = Arc::new(config);
@@ -875,6 +1084,33 @@ mod tests {
             #[cfg(feature = "comfy")]
             proxy_client: reqwest::Client::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_http_headers_on_the_wire() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let dir = tempdir().unwrap();
+        let config: Config = toml::from_str(&format!(
+            "[[sites]]\nhost='example.test'\nroot='{}'\n",
+            dir.path().display()
+        ))
+        .unwrap();
+        let app = public_router(&config, test_state(config.clone()));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: example.test\r\nInvalid Header: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = vec![0; 1024];
+        let n = tokio::time::timeout(Duration::from_secs(2), client.read(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response[..n].starts_with(b"HTTP/1.1 400"));
+        server.abort();
     }
 
     #[tokio::test]

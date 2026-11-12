@@ -55,6 +55,7 @@ pub struct ServerConfig {
     pub max_in_flight_requests: usize,
     pub listen_backlog: u32,
     pub max_body_bytes: usize,
+    pub max_proxy_response_bytes: usize,
     pub request_timeout_ms: u64,
     pub shutdown_grace_period_s: u64,
     pub json_logs: bool,
@@ -68,6 +69,7 @@ impl Default for ServerConfig {
             max_in_flight_requests: 1024,
             listen_backlog: 1024,
             max_body_bytes: 8 * 1024 * 1024,
+            max_proxy_response_bytes: 8 * 1024 * 1024,
             request_timeout_ms: 30_000,
             shutdown_grace_period_s: 15,
             json_logs: false,
@@ -194,6 +196,9 @@ impl Config {
         if self.server.max_in_flight_requests == 0
             || self.server.listen_backlog == 0
             || self.server.max_body_bytes == 0
+            || self.server.max_proxy_response_bytes == 0
+            || self.server.request_timeout_ms == 0
+            || self.server.shutdown_grace_period_s == 0
             || self.websocket.outbound_queue_messages == 0
             || self.websocket.outbound_queue_bytes == 0
             || self.websocket.scheduler_quantum_bytes == 0
@@ -355,5 +360,22 @@ mod tests {
         );
         let config: Config = toml::from_str(&text).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_zero_timeouts_and_proxy_response_limit() {
+        let dir = tempdir().unwrap();
+        for setting in [
+            "request_timeout_ms=0",
+            "shutdown_grace_period_s=0",
+            "max_proxy_response_bytes=0",
+        ] {
+            let text = format!(
+                "[server]\n{setting}\n[[sites]]\nhost='example.test'\nroot='{}'\n",
+                dir.path().display()
+            );
+            let config: Config = toml::from_str(&text).unwrap();
+            assert!(config.validate().is_err(), "accepted {setting}");
+        }
     }
 }
