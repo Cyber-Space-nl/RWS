@@ -1,9 +1,12 @@
 [package]
 name = "rws-comfy"
+description = "Rust WebServer with optional proxy and adaptive scheduling"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 anyhow = "1.0"

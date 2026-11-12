@@ -1,9 +1,8 @@
 # Changelog
 
-Notable changes are recorded here. Dates and versioned release entries will be added when releases
-are published. No official beta release is represented by the workspace's current `0.1.0` value.
+Notable changes are recorded here. Dates are added when releases are published.
 
-## Unreleased
+## 0.1.0-beta.1 — prepared, not published
 
 ### Added
 

@@ -9,10 +9,12 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-beta.1"
 edition = "2024"
 license = "MIT"
 rust-version = "1.88"
+authors = ["Daan Wentink"]
+repository = "https://github.com/Cyber-Space-nl/RWS"
 
 [profile.release]
 lto = "fat"

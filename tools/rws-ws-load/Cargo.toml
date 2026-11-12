@@ -1,9 +1,12 @@
 [package]
 name = "rws-ws-load"
+description = "WebSocket load-testing tool for Rust WebServer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 anyhow = "1.0"

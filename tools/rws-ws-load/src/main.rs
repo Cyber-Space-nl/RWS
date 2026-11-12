@@ -115,6 +115,10 @@ fn parse_args() -> Result<Options> {
             "--payload-bytes" => options.payload_bytes = parse_value(&mut args, "--payload-bytes")?,
             "--idle-seconds" => options.idle_seconds = parse_value(&mut args, "--idle-seconds")?,
             "--allow-large-test" => options.allow_large_test = true,
+            "-V" | "--version" => {
+                println!("rws-ws-load {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
             "-h" | "--help" => {
                 println!(
                     "rws-ws-load [--url URL] [--connections N] [--messages N] [--payload-bytes N] [--idle-seconds N] [--allow-large-test]"
