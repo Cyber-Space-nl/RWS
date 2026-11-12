@@ -19,19 +19,6 @@ secrets.*
 .DS_Store
 Thumbs.db
 
-# Invalid benchmark run retained locally for diagnostics only
-/benchmark-results-20261027-invalid-firewall-attempt/
-/benchmark-results-20261027/
-
-# Internal planning documents retained locally
-/01_RSW_VOLLEDIGE_SPECIFICATIE.md
-/02_RSW_CONCEPT_KORT.md
-/03_CODEX_PROMPT_RSW_MVP.md
-/info.txt
-/BENCHMARK_STATIC.md
-/tools/rws-bench/LOCAL_SMOKE_REPORT.md
-
-# Machine-specific benchmark and deployment configs retained locally
-/config.cache-smoke.toml
-/deployment-config.cache-on.toml
+# Files retained locally but excluded from the public repository
+/Zut/
 

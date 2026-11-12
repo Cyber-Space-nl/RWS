@@ -291,9 +291,6 @@ without access logs, install `wrk`, and run:
 ./scripts/benchmark-http.sh http://127.0.0.1/robots.txt bench.local
 ```
 
-The reproducible RWS/Nginx procedure, equivalence checks, cache toggles and deploy/rollback
-commands are in `BENCHMARK_STATIC.md`.
-
 Run the load generator on a separate machine for publishable results so it does not compete with
 the server for CPU. Benchmark static HTTP, TLS, PHP and WebSockets separately.
 
