@@ -29,7 +29,7 @@ For systemd installation, see [Ubuntu installation](UBUNTU_INSTALL.md).
 
 ## Documentation and platforms
 
-- [Architecture](docs/ARCHITECTURE.md), [security testing](docs/SECURITY_TESTING.md) and [benchmarking](docs/BENCHMARKING.md)
+- [Architecture](docs/ARCHITECTURE.md), [security testing](docs/SECURITY_TESTING.md), [benchmarking](docs/BENCHMARKING.md) and [independent validation](docs/EXTERNAL_VALIDATION.md)
 - [Contributing](CONTRIBUTING.md), [security policy](SECURITY.md) and [changelog](CHANGELOG.md)
 - Linux is the deployment target; Ubuntu 24.04 on WSL2 and Linux GitHub Actions runners have been
   used for builds and tests. Linux 5.6 or newer is required for contained static-file opening.
