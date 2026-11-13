@@ -26,6 +26,11 @@ clients; it did not verify delivery of all queued messages. The standard smoke t
 host routing, health, 20 WebSocket clients and shutdown. These are small functional tests, not proof
 of resilience under sustained load.
 
+The supplied systemd units omit `RestrictSUIDSGID`: on Ubuntu 24.04 this setting blocks
+`openat2`, causing file requests to fail. They retain `NoNewPrivileges`, which prevents gaining
+privileges through execution but does not prevent creation of set-ID files. Keep the service
+user unprivileged and limit its write access.
+
 ## Trust boundaries and gaps
 
 - Linux static reads use `openat2` beneath the configured root and retain the opened descriptor;

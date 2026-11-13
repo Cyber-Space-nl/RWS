@@ -14,6 +14,10 @@ Notable changes are recorded here. Dates are added when releases are published.
 - Reproducible benchmark fixtures, unique-path workloads, environment metadata and reports.
 - Contributor, security, architecture and benchmarking documentation.
 
+### Fixed
+
+- The systemd units no longer block the `openat2` calls used to serve files on Ubuntu 24.04.
+
 ### Changed
 
 - Project components, binaries, services, configuration paths, metrics and WebSocket endpoint use
