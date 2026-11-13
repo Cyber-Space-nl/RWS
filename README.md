@@ -7,6 +7,9 @@ PHP-FPM applications, provides a native WebSocket echo endpoint, and offers an o
 reverse proxy. It is an MVP for testing and measurement, not yet a drop-in replacement for Nginx
 or Apache.
 
+The [v0.1.0-beta.1 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.1)
+provides experimental Linux x86-64 binaries and release notes.
+
 ## Local quickstart
 
 On Linux with Rust 1.88 or newer, run the included loopback-only example without root privileges:
