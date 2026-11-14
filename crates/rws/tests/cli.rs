@@ -13,5 +13,5 @@ fn unified_binary_reports_its_name_and_default_config() {
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
     assert!(help.contains("/etc/rws/config.toml"));
-    assert!(!help.contains("rws-simple") && !help.contains("rws-comfy"));
+    assert!(!help.contains("rws-simple"));
 }

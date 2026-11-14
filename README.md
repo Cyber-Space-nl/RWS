@@ -18,9 +18,8 @@ Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview
 
 **Release versus source:** the `v0.1.0-beta.2` prerelease includes single byte ranges,
 date-based conditional requests, optional gzip and optional Linux directory listings. The older
-`v0.1.0-beta.1` binaries do not include these features. The `main` branch contains a later,
-breaking change to one `rws` binary, service and configuration path; see the
-[migration guide](UBUNTU_INSTALL.md#migrating-from-an-older-version).
+`v0.1.0-beta.1` binaries do not include these features. The `main` branch builds the current
+`rws` binary from source.
 
 ## Local quickstart
 
@@ -187,7 +186,7 @@ project VPS:
   `8104bb0910485098a4990b085c5ee56003029e1305ed6d2603b4c34c13225508`.
 - The final smoke check recorded 20 cache hits and one miss, with no bypasses, evictions,
   invalidations or service errors.
-- This historical deployment predates the unified `rws` binary and was not automatically migrated.
+- This historical deployment predates the current `rws` binary.
 
 These are historical observations, not a statement about the current server or a current release.
 Check the CI badge for the latest automated status; [security testing](docs/SECURITY_TESTING.md)
@@ -254,12 +253,6 @@ If Ubuntu uses a different PHP-FPM socket, find it and update `php_fpm`:
 ```bash
 find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' -print
 ```
-
-## Migrating an existing installation
-
-The current build does not automatically replace or migrate existing installations.
-Follow the [migration and rollback guide](UBUNTU_INSTALL.md#migrating-from-an-older-version)
-before changing an existing installation.
 
 ## TLS
 

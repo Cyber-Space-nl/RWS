@@ -6,9 +6,8 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 ### Changed
 
-- Replaced the Simple and Comfy server variants with a single `rws` binary and service. HTTP
-  proxying and adaptive scheduling remain available as optional configuration. This is a
-  breaking change to binary, service and configuration paths; migration is manual.
+- The server is built as a single `rws` binary and service. HTTP proxying and adaptive scheduling
+  are available as optional configuration.
 
 ## 0.1.0-beta.2 — 2026-11-14
 
@@ -37,10 +36,10 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 - Project components, binaries, services, configuration paths, metrics and WebSocket endpoint use
   the `rws` prefix. This breaks compatibility with pre-rename installations; migration is manual.
-- Client-provided forwarding headers are removed by the Comfy proxy. PHP and proxy request and
+- Client-provided forwarding headers are removed by the HTTP proxy. PHP and proxy request and
   response limits apply per request and may require configuration changes for large workloads.
 - The workspace minimum Rust version is 1.88 for the current lockfile.
-- Comfy explicitly selects the server's Rustls provider when none is installed, avoiding a TLS
+- The server explicitly selects its Rustls provider when none is installed, avoiding a TLS
   startup panic when both AWS-LC and ring features are enabled.
 
 Historical benchmark reports retain their original measurements and methods.

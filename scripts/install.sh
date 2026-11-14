@@ -12,12 +12,10 @@ logrotate_source="$project_root/packaging/rws.logrotate"
 
 [ -x "$binary" ] || { echo "Missing release binary. Run: scripts/build-linux.sh" >&2; exit 1; }
 
-for legacy in rws-simple rws-comfy; do
-  if systemctl is-active --quiet "$legacy"; then
-    echo "Legacy service $legacy is active. Stop it and follow the migration guide before installing." >&2
-    exit 1
-  fi
-done
+if systemctl is-active --quiet rws-simple; then
+  echo "Service rws-simple is active. Stop it before installing RWS." >&2
+  exit 1
+fi
 
 backup_existing() {
   local path=$1
