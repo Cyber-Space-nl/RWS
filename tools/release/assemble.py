@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 
-VERSION = '0.1.0-beta.3'
+VERSION = '0.1.0-beta.4'
 TARGET = 'x86_64-unknown-linux-gnu'
 BINARIES = ('rws', 'rws-ws-load', 'rws-bench')
 ROOT = pathlib.Path(__file__).resolve().parents[2]

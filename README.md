@@ -11,7 +11,7 @@ or Apache.
 reverse proxying and adaptive WebSocket scheduling. Configure the features you need in one
 configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
 
-The [v0.1.0-beta.3 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.3)
+The [v0.1.0-beta.4 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.4)
 provides experimental Linux x86-64 binaries and release notes. Visit
 [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
@@ -273,14 +273,13 @@ Start with:
 
 - `config.example.toml`
 
-On `main`, static GET supports single and multipart byte ranges. Multipart requests are limited to
+Static GET supports single and multipart byte ranges. Multipart requests are limited to
 16 ranges and 1 MiB of selected data; larger requests receive the full response. HEAD ignores
 Range. Buffered identity and gzip representations have distinct strong SHA-256 ETags and support
 `If-Match` and `If-None-Match`. A matching strong identity ETag or a matching `Last-Modified` date
 at least 60 seconds old is honored in `If-Range`; unsupported values receive the full response.
 Streamed files do not emit ETags. Date preconditions also apply. Cached content and validators
-follow the cache revalidation interval.
-These additions postdate the beta.3 release.
+follow the cache revalidation interval. Multipart ranges and ETags were introduced in beta.4.
 
 The following per-site options are **off by default**:
 
