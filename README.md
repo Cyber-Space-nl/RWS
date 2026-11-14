@@ -7,14 +7,13 @@ PHP-FPM applications, provides a native WebSocket echo endpoint, and offers an o
 reverse proxy. It is an MVP for testing and measurement, not yet a drop-in replacement for Nginx
 or Apache.
 
-The [v0.1.0-beta.1 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.1)
+The [v0.1.0-beta.2 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.2)
 provides experimental Linux x86-64 binaries and release notes.
 Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
-**Release versus source:** the published `v0.1.0-beta.1` binaries predate the static-file
-features described below. Single byte ranges, date-based conditional requests, optional gzip
-and optional directory listings are currently available from the `main` branch; they have not
-yet been included in a published release.
+**Release versus source:** the `v0.1.0-beta.2` prerelease includes single byte ranges,
+date-based conditional requests, optional gzip and optional Linux directory listings. The older
+`v0.1.0-beta.1` binaries do not include these features. The `main` branch may contain later changes.
 
 ## Local quickstart
 
@@ -36,7 +35,7 @@ curl -i http://127.0.0.1:19091/healthz
 Stop the server with Ctrl+C. The example serves `examples/site`; it does not enable PHP or TLS.
 For systemd installation, see [Ubuntu installation](UBUNTU_INSTALL.md).
 
-### Try the static-file features on `main`
+### Try the static-file features
 
 With the quickstart server running, request part of the example page:
 

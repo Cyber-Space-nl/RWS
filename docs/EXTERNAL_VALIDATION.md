@@ -1,4 +1,4 @@
-# Independent validation checklist — RWS v0.1.0-beta.1
+# Independent validation checklist — RWS beta
 
 This is a procedure for an independent developer; unchecked items are **not evidence that a test
 passed**. Record `PASS`, `FAIL` or `NOT RUN`, the date, commands, results and evidence for each
@@ -16,8 +16,7 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   and exercise load. Do not run them on a production or shared machine. Use a separate authorised
   load generator for comparative benchmarks. Verify ports 8080, 8443 and 9091 are free.
 - [ ] **[Manual]** Obtain the approved source revision and, if supplied, the candidate archive and
-  checksum from the maintainer. The beta is not published yet; a commit or tag may not be available
-  from the public remote until it is pushed. Record the source revision, artifact checksum, OS,
+  checksum from the maintainer or the relevant public GitHub release. Record the source revision, artifact checksum, OS,
   kernel, CPU, RAM, Rust version, server configuration and generator location. Do not include
   credentials or private keys in evidence. Record the artifact's `BUILD_INFO.json` revision
   separately from the checkout used for this checklist: a later documentation-only commit can
@@ -40,10 +39,12 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
 - [ ] **[Command]** If given the standalone archive, obtain its expected checksum through a trusted
   channel, compare it with the supplied `SHA256SUMS`, and run `sha256sum -c SHA256SUMS` in the
   artifact directory. Extract into a new directory, run `sha256sum -c BINARY_SHA256SUMS` inside it,
-  then run each `bin/rws-* --version` explicitly. All four must report `0.1.0-beta.1`. SHA-256
+  then run each `bin/rws-* --version` explicitly. All four must report the version of the selected
+  release. SHA-256
   detects changes but is not a signature: an attacker who can replace both files can replace both
-  hashes. The draft package built on Ubuntu 24.04 requires GLIBC symbols up to 2.39; a failure on an
-  older runtime is not proof of support there. In the extracted directory:
+  hashes. The `v0.1.0-beta.1` package built on Ubuntu 24.04 requires GLIBC symbols up to 2.39;
+  check the specific artifact's requirements and do not assume support for older runtimes. In the
+  extracted directory:
 
   ```bash
   sha256sum -c BINARY_SHA256SUMS

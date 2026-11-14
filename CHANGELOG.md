@@ -2,7 +2,7 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
-## Unreleased
+## 0.1.0-beta.2 — 2026-11-14
 
 ### Added
 
