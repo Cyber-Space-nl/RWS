@@ -2,6 +2,12 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## Unreleased
+
+### Added
+
+- Weak, metadata-based ETags for streamed static files on Linux, with conditional GET and HEAD.
+
 ## 0.1.0-beta.4 — 2026-11-14
 
 ### Added

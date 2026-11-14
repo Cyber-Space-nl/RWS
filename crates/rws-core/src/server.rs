@@ -509,9 +509,14 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     if encoding.unacceptable {
         return encoding_not_acceptable();
     }
-    if state.static_cache.should_stream(target.metadata.len())
-        && let Some(mut response) =
-            static_precondition_response(request.headers(), target.metadata.modified().ok(), None)
+    let streamed = state.static_cache.should_stream(target.metadata.len());
+    let stream_tag = streamed.then(|| streamed_etag(&target.metadata)).flatten();
+    if streamed
+        && let Some(mut response) = static_precondition_response(
+            request.headers(),
+            target.metadata.modified().ok(),
+            stream_tag.as_ref(),
+        )
     {
         if encoding.varies {
             response
@@ -520,25 +525,28 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
         }
         return response;
     }
-    let (body, length) = if is_head
-        && !encoding.gzip
-        && state.static_cache.should_stream(target.metadata.len())
-    {
+    let (body, length) = if is_head && !encoding.gzip && streamed {
         state
             .static_cache
             .validate_metadata(site.id, &request_path, &target.metadata);
         (None::<Bytes>, target.metadata.len())
     } else {
-        if state.static_cache.should_stream(target.metadata.len()) {
+        if streamed {
             state.static_cache.record_bypass();
             let range = requested_range(
                 &request,
                 target.metadata.len(),
-                None,
+                stream_tag.as_ref(),
                 target.metadata.modified().ok(),
             );
-            return match streamed_file_response(target.file, &target.path, &target.metadata, range)
-                .await
+            return match streamed_file_response(
+                target.file,
+                &target.path,
+                &target.metadata,
+                range,
+                stream_tag.as_ref(),
+            )
+            .await
             {
                 Ok(response) => response,
                 Err(error) => static_read_error(site, &target.path, error),
@@ -590,6 +598,9 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
         HeaderValue::from_static("nosniff"),
     );
     add_static_headers(&mut response, target.metadata.modified().ok());
+    if let Some(tag) = stream_tag {
+        response.headers_mut().insert(header::ETAG, tag);
+    }
     if encoding.varies {
         response
             .headers_mut()
@@ -603,11 +614,16 @@ async fn streamed_file_response(
     path: &Path,
     metadata: &std::fs::Metadata,
     range: ByteRange,
+    etag: Option<&HeaderValue>,
 ) -> std::io::Result<Response> {
     let full_length = metadata.len();
     let modified = metadata.modified().ok();
     if matches!(range, ByteRange::Unsatisfiable) {
-        return Ok(range_not_satisfiable(full_length, modified));
+        let mut response = range_not_satisfiable(full_length, modified);
+        if let Some(tag) = etag {
+            response.headers_mut().insert(header::ETAG, tag.clone());
+        }
+        return Ok(response);
     }
     if let ByteRange::Multiple(ranges) = &range {
         let mut parts = Vec::with_capacity(ranges.len());
@@ -618,13 +634,11 @@ async fn streamed_file_response(
             parts.push(Bytes::from(bytes));
         }
         let mime = mime_guess::from_path(path).first_or_octet_stream();
-        return Ok(multipart_response(
-            ranges,
-            &parts,
-            mime.as_ref(),
-            full_length,
-            modified,
-        ));
+        let mut response = multipart_response(ranges, &parts, mime.as_ref(), full_length, modified);
+        if let Some(tag) = etag {
+            response.headers_mut().insert(header::ETAG, tag.clone());
+        }
+        return Ok(response);
     }
     let (length, partial) = match range {
         ByteRange::Selected(start, end) => {
@@ -649,10 +663,39 @@ async fn streamed_file_response(
         HeaderValue::from_static("nosniff"),
     );
     add_static_headers(&mut response, modified);
+    if let Some(tag) = etag {
+        response.headers_mut().insert(header::ETAG, tag.clone());
+    }
     if let Some((start, end)) = partial {
         set_content_range(&mut response, start, end, full_length);
     }
     Ok(response)
+}
+
+#[cfg(target_os = "linux")]
+fn streamed_etag(metadata: &std::fs::Metadata) -> Option<HeaderValue> {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::MetadataExt;
+    let fingerprint = format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec()
+    );
+    HeaderValue::from_str(&format!(
+        "W/\"{:x}\"",
+        Sha256::digest(fingerprint.as_bytes())
+    ))
+    .ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn streamed_etag(_metadata: &std::fs::Metadata) -> Option<HeaderValue> {
+    None
 }
 
 fn cached_response(asset: CachedAsset, request: &Request, ignore_range: bool) -> Response {
@@ -900,7 +943,7 @@ fn requested_range(
         let mut values = request.headers().get_all(header::IF_RANGE).iter();
         let valid = match (values.next(), values.next()) {
             (Some(value), None) => {
-                etag.is_some_and(|tag| value == tag)
+                etag.is_some_and(|tag| !tag.as_bytes().starts_with(b"W/") && value == tag)
                     || value
                         .to_str()
                         .ok()
@@ -1108,7 +1151,11 @@ fn entity_tag_matches(value: &HeaderValue, etag: Option<&HeaderValue>, weak: boo
         }
         if byte == b',' && !quoted {
             let item = value[start..index].trim();
-            if item == tag || (weak && item.strip_prefix("W/") == Some(tag)) {
+            let candidate = item.strip_prefix("W/").unwrap_or(item);
+            let current = tag.strip_prefix("W/").unwrap_or(tag);
+            if (weak && candidate == current)
+                || (!weak && !item.starts_with("W/") && !tag.starts_with("W/") && item == tag)
+            {
                 return true;
             }
             start = index + 1;
@@ -2417,6 +2464,88 @@ mod tests {
             assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
             assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */0");
         }
+    }
+
+    #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn streamed_weak_etags_validate_and_preserve_range_rules() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("asset.txt");
+        std::fs::write(&path, "abcdefghij").unwrap();
+        let config: Config = toml::from_str(&format!("[static_cache]\nenabled=true\nmax_total_bytes=1024\nmax_file_bytes=4\n[[sites]]\nhost='example.test'\nroot='{}'\n", directory.path().display())).unwrap();
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let req = |method: Method, headers: &[(&str, &str)]| {
+            let mut builder = Request::builder().method(method).uri("/asset.txt");
+            for &(key, value) in headers {
+                builder = builder.header(key, value);
+            }
+            builder.body(Body::empty()).unwrap()
+        };
+        let response = static_or_php(&state, site, req(Method::GET, &[])).await;
+        let tag = response.headers()[header::ETAG]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(tag.starts_with("W/\""));
+        assert_eq!(
+            to_bytes(response.into_body(), 32).await.unwrap(),
+            "abcdefghij"
+        );
+        let response = static_or_php(&state, site, req(Method::HEAD, &[])).await;
+        assert_eq!(response.headers()[header::ETAG], tag);
+        let response =
+            static_or_php(&state, site, req(Method::GET, &[("if-none-match", &tag)])).await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::ETAG], tag);
+        let response = static_or_php(
+            &state,
+            site,
+            req(
+                Method::GET,
+                &[("if-none-match", tag.strip_prefix("W/").unwrap())],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        let response = static_or_php(&state, site, req(Method::GET, &[("if-match", &tag)])).await;
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let response = static_or_php(
+            &state,
+            site,
+            req(
+                Method::GET,
+                &[("if-match", tag.strip_prefix("W/").unwrap())],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let response = static_or_php(
+            &state,
+            site,
+            req(Method::GET, &[("range", "bytes=0-1"), ("if-range", &tag)]),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let response =
+            static_or_php(&state, site, req(Method::GET, &[("range", "bytes=0-1")])).await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::ETAG], tag);
+        let response =
+            static_or_php(&state, site, req(Method::GET, &[("range", "bytes=50-")])).await;
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()[header::ETAG], tag);
+        let replacement = directory.path().join("replacement.txt");
+        std::fs::write(&replacement, "0123456789").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        let response =
+            static_or_php(&state, site, req(Method::GET, &[("if-none-match", &tag)])).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_ne!(response.headers()[header::ETAG], tag);
+        assert_eq!(
+            to_bytes(response.into_body(), 32).await.unwrap(),
+            "0123456789"
+        );
     }
 
     #[tokio::test]

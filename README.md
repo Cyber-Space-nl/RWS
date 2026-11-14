@@ -152,7 +152,8 @@ memory leaks.
 ## Explicit MVP limitations
 
 - One TLS certificate/key pair per process; per-SNI certificates are not implemented yet.
-- Strong ETags are provided for buffered identity and gzip representations, not streamed files.
+- Streamed-file ETags are weak Linux metadata validators; they are not content hashes and depend
+  on filesystem metadata reliably changing when file contents change.
   The in-memory cache does not add browser/CDN cache-control headers.
 - Site roots and their parent directories must not be writable by untrusted users. PHP-FPM opens
   scripts separately from RWS, and non-Linux builds do not have race-resistant contained opens.
@@ -280,8 +281,12 @@ Static GET supports single and multipart byte ranges. Multipart requests are lim
 Range. Buffered identity and gzip representations have distinct strong SHA-256 ETags and support
 `If-Match` and `If-None-Match`. A matching strong identity ETag or a matching `Last-Modified` date
 at least 60 seconds old is honored in `If-Range`; unsupported values receive the full response.
-Streamed files do not emit ETags. Date preconditions also apply. Cached content and validators
-follow the cache revalidation interval. Multipart ranges and ETags were introduced in beta.4.
+On `main`, streamed files on Linux use weak ETags based on device, inode, size, modification time
+and change time. They support `If-None-Match` but cannot satisfy `If-Match` or ETag-based
+`If-Range`. Their reliability depends on the filesystem updating those metadata values; unusual
+or remote filesystems may not provide reliable change detection. Streamed responses on non-Linux
+systems do not emit ETags. Date preconditions also apply. Cached content and validators follow the
+cache revalidation interval. Multipart ranges and buffered ETags were introduced in beta.4.
 
 The following per-site options are **off by default**:
 
