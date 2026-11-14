@@ -84,7 +84,7 @@ def main():
             if version != f'{binary} {VERSION}':
                 raise RuntimeError(f'unexpected {binary} version: {version}')
             shutil.copy2(source_binary, bundle / 'bin' / binary)
-        for path in ('LICENSE', 'README.md', 'UBUNTU_INSTALL.md', 'CHANGELOG.md', 'SECURITY.md',
+        for path in ('LICENSE', 'README.md', 'rws-icon.png', 'UBUNTU_INSTALL.md', 'CHANGELOG.md', 'SECURITY.md',
                      'CONTRIBUTING.md', 'Cargo.lock', 'config.example.toml',
                      'RWS_NGINX_APACHE_BENCHMARK.html', 'RWS_MEMORY_STABILITY_20M.html'):
             shutil.copy2(source / path, bundle / path)
