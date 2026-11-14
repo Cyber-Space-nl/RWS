@@ -35,7 +35,7 @@ up existing `rws` binary, unit and logrotate files. It refuses to run while `rws
 `--check` does not verify runtime access as user `rws`, port availability, PHP-FPM connectivity or
 certificate trust. Inspect `systemctl status rws` and the journal after starting.
 
-## Migrating from Simple or Comfy
+## Migrating from an older version
 
 The unified build does **not** automatically modify or remove an older installation. Its binary,
 unit, config and logs use `/usr/local/bin/rws`, `rws.service`, `/etc/rws/` and `/var/log/rws/`;
@@ -50,8 +50,8 @@ configuration, TLS keys, logrotate settings and site data.
    installer will still refuse installation if the other legacy service is active.
 3. Copy or merge the old configuration into `/etc/rws/config.toml`, then review it. In particular,
    update per-site log paths to `/var/log/rws/` or ensure their existing paths remain accessible,
-   and verify TLS key paths and permissions. Proxy and adaptive settings from Comfy remain
-   supported. Simple's static configuration is also accepted.
+   and verify TLS key paths and permissions. Existing static, proxy and adaptive configuration
+   settings remain supported.
 4. Run `sudo /usr/local/bin/rws --config /etc/rws/config.toml --check`, start the new service with
    `sudo systemctl start rws`, and verify HTTP, HTTPS, PHP-FPM, WebSockets, proxying and logs as
    applicable. `--check` alone does not prove runtime success.

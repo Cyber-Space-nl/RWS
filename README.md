@@ -12,16 +12,15 @@ reverse proxying and adaptive WebSocket scheduling. Configure the features you n
 configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
 
 The [v0.1.0-beta.2 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.2)
-provides experimental Linux x86-64 binaries and release notes. It predates the unified `rws`
-binary and contains the earlier Simple and Comfy variants. The unified build is available from
-the current source and has not yet been published as a release.
+provides experimental Linux x86-64 binaries and release notes. It predates the current `rws`
+binary, which is available from source and has not yet been published as a release.
 Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
 **Release versus source:** the `v0.1.0-beta.2` prerelease includes single byte ranges,
 date-based conditional requests, optional gzip and optional Linux directory listings. The older
 `v0.1.0-beta.1` binaries do not include these features. The `main` branch contains a later,
 breaking change to one `rws` binary, service and configuration path; see the
-[migration guide](UBUNTU_INSTALL.md#migrating-from-simple-or-comfy).
+[migration guide](UBUNTU_INSTALL.md#migrating-from-an-older-version).
 
 ## Local quickstart
 
@@ -89,7 +88,7 @@ See [Configuration](#configuration) for the size limits and other details.
 
 ## Benchmark snapshot
 
-On 13 November 2026, RWS Simple, Nginx and Apache served identical 67-byte and 4 KiB static
+On 13 November 2026, an earlier RWS beta, Nginx and Apache served identical 67-byte and 4 KiB static
 files on a shared two-vCPU Oracle ARM64 host. A separate generator offered 100 or 600 requests/s
 over 50 HTTP/1.1 keep-alive connections through an SSH tunnel. Each scenario was repeated three
 times for eight seconds; the servers were run in rotating order.
@@ -258,8 +257,8 @@ find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' -print
 
 ## Migrating an existing installation
 
-The unified build does not replace or migrate existing `rws-simple` or `rws-comfy` services
-automatically. Follow the [migration and rollback guide](UBUNTU_INSTALL.md#migrating-from-simple-or-comfy)
+The current build does not automatically replace or migrate existing installations.
+Follow the [migration and rollback guide](UBUNTU_INSTALL.md#migrating-from-an-older-version)
 before changing an existing installation.
 
 ## TLS
@@ -439,8 +438,7 @@ sudo systemctl start rws
 sudo ./scripts/uninstall.sh
 ```
 
-The uninstall script preserves `/etc/rws`, logs and `/var/www` data. It does not remove legacy
-Simple or Comfy installations.
+The uninstall script preserves `/etc/rws`, logs, `/var/www` data and older RWS installations.
 
 ## Developer checks
 

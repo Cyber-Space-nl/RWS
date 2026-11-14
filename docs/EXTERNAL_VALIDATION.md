@@ -1,6 +1,6 @@
 # Independent validation checklist — RWS beta
 
-This checklist targets the unified `rws` build. For older Simple/Comfy releases, use the checklist
+This checklist targets the current `rws` build. For older releases, use the checklist
 from the corresponding release tag.
 
 This is a procedure for an independent developer; unchecked items are **not evidence that a test
