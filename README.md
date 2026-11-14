@@ -9,6 +9,7 @@ or Apache.
 
 The [v0.1.0-beta.1 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.1)
 provides experimental Linux x86-64 binaries and release notes.
+Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
 ## Local quickstart
 
@@ -42,38 +43,32 @@ For systemd installation, see [Ubuntu installation](UBUNTU_INSTALL.md).
 
 ## Benchmark snapshot
 
-RWS, Nginx and Apache were compared on the same 1-vCPU Ubuntu VPS using a byte-identical
-77-byte static file. Each server received three 15-second runs with 1,000 keep-alive connections
-and an offered rate of 10,000 requests/second. The results below were measured on 27 October 2026.
+On 13 November 2026, RWS Simple, Nginx and Apache served identical 67-byte and 4 KiB static
+files on a shared two-vCPU Oracle ARM64 host. A separate generator offered 100 or 600 requests/s
+over 50 HTTP/1.1 keep-alive connections through an SSH tunnel. Each scenario was repeated three
+times for eight seconds; the servers were run in rotating order.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/benchmark/throughput.svg" alt="Throughput by repetition for RWS, Nginx and Apache"></td>
-    <td width="50%"><img src="docs/benchmark/latency.svg" alt="Median latency profile for RWS, Nginx and Apache"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/benchmark/memory.svg" alt="RWS memory stability over 20 million static keep-alive requests"></td>
-    <td width="50%"><img src="docs/benchmark/failures.svg" alt="Failed responses by repetition for RWS, Nginx and Apache"></td>
-  </tr>
-</table>
+![ARM64 p95 latency at 600 offered requests per second](docs/benchmark/arm64-latency.svg)
 
-At this capped workload, RWS and Nginx both sustained more than 99% of the offered rate without
-failed responses. RWS recorded a median p99 latency of **7.10 ms**, compared with **8.19 ms** for
-Nginx. Apache saturated below the offered rate and recorded 250 failed responses across its three
-runs.
+![ARM64 server CPU at 600 offered requests per second](docs/benchmark/arm64-cpu.svg)
 
-A newer cold-start stability test processed 20 million static keep-alive requests without errors.
-RWS rose from **6.55 MiB** cold RSS to **11.11 MiB** after 20 million requests, with only **4 KiB**
-of growth between 15 and 20 million requests. A separate connection-churn test peaked at
-**40.3 MiB** and settled at **36.7 MiB** after temporary worker threads disappeared. Both tests
-formed a plateau rather than showing continuously growing memory use.
+The p95 chart shows the median of **three run-level p95s**; the CPU chart shows the median of
+**two monitored runs** per server and file. For the 4 KiB file at 600 offered requests/s, those
+p95 values were 1.57 ms for RWS, 1.65 ms for Nginx and 1.68 ms for Apache. All 36 runs recorded
+100,800 successful responses, with no recorded failed responses, connection failures or socket
+errors. Nginx and Apache used tuned configurations; the servers have different cache designs.
 
-These measurements describe specific workloads on the same one-vCPU test host. The offered-rate
-ceiling means the comparison does not establish maximum RWS or Nginx throughput, while the
-20-million-request run is a leak-stability test rather than a cross-server memory comparison. See
-the [comparison report](RWS_NGINX_APACHE_BENCHMARK.html) and
-[20-million-request memory report](RWS_MEMORY_STABILITY_20M.html) for the complete methods,
-warnings and raw measurements.
+The hosts also ran other services, and latency includes the network, SSH tunnel and client. These
+short, capped tests do **not** establish maximum throughput or a general performance ranking. See
+the [ARM64 results and methodology](docs/benchmark/arm64-2026-11-13.md),
+[full ARM64 comparison](https://rws.cyber-space.nl/oracle-comparison-2026-11-13.html), and
+[RWS-only ARM64 study](https://rws.cyber-space.nl/oracle-rws-2026-11-13.html).
+
+The [historical x86 comparison](https://rws.cyber-space.nl/RWS_NGINX_APACHE_BENCHMARK.html) used a different 1-vCPU workload;
+its 10,000 requests/s offered rate was a ceiling, not a maximum-throughput measurement. A separate
+[20-million-request RWS memory stability test](https://rws.cyber-space.nl/RWS_MEMORY_STABILITY_20M.html) rose from 6.55 MiB
+to 11.11 MiB RSS. It is not a cross-server memory comparison or proof that other workloads have no
+memory leaks.
 
 ## Workspace components
 
@@ -104,7 +99,7 @@ warnings and raw measurements.
 - Graceful SIGINT/SIGTERM shutdown.
 - Strict TOML parsing; unknown configuration fields are rejected.
 - Optional asynchronous access and error logs per virtual host.
-- Configurable TCP listen backlog and `TCP_NODELAY` for HTTP connections.
+- Configurable TCP listen backlog for HTTP connections.
 - Sharded atomic request and cache counters to reduce contention on busy paths.
 - Comfy-only HTTP reverse proxy and bounded adaptive quantum controller.
 - Separate Ubuntu installers and hardened systemd units.
