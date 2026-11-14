@@ -76,14 +76,15 @@ See [Configuration](#configuration) for the size limits and other details.
 
 ## Documentation and platforms
 
-- [Architecture](docs/ARCHITECTURE.md), [security testing](docs/SECURITY_TESTING.md), [benchmarking](docs/BENCHMARKING.md), [compatibility and overload checks](docs/validation/compatibility-overload-2026-11-14.md), [Ubuntu 24.04 VM validation](docs/validation/ubuntu-24.04-beta5.md) and [independent validation](docs/EXTERNAL_VALIDATION.md)
+- [Architecture](docs/ARCHITECTURE.md), [security testing](docs/SECURITY_TESTING.md), [benchmarking](docs/BENCHMARKING.md), [compatibility and overload checks](docs/validation/compatibility-overload-2026-11-14.md), [Ubuntu 22.04 VM validation](docs/validation/ubuntu-22.04-beta5.md), [Ubuntu 24.04 VM validation](docs/validation/ubuntu-24.04-beta5.md) and [independent validation](docs/EXTERNAL_VALIDATION.md)
 - [Contributing](CONTRIBUTING.md), [security policy](SECURITY.md) and [changelog](CHANGELOG.md)
 - Linux is the deployment target; Ubuntu 24.04 on WSL2 and Linux GitHub Actions runners have been
   used for builds and tests. Linux 5.6 or newer is required for contained static-file opening.
   Windows workspace tests are useful for development but Windows deployment is not established.
 - The beta.5 Linux x86-64 archive is built against the Ubuntu 22.04 glibc baseline. The older
-  beta.4 server binary does not start on Ubuntu 22.04 because it requires GLIBC 2.38. Systemd and
-  PHP-FPM installation on Ubuntu 22.04 has not been tested.
+  beta.4 server binary does not start on Ubuntu 22.04 because it requires GLIBC 2.38. A clean
+  Ubuntu 22.04 VM test passed with systemd and PHP 8.1 after changing the configured socket; the
+  shipped unit's PHP 8.3 ordering and the other limits are described in the validation report.
 - The workflow in this tree checks the locked workspace with Rust 1.88 and runs the main checks on stable Rust.
   A new dependency resolution may require a newer toolchain; use the committed lockfile.
 

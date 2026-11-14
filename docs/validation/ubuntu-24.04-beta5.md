@@ -25,6 +25,6 @@ was `1ecc29ab9f7f1a3ec5bb76d102e57f5e6f0de19a`.
 
 This does not validate a fresh beta.5 install, automated rollback, other distributions or
 architectures, HTTPS, PHP application isolation, sustained production load or security against
-untrusted writers. Ubuntu 22.04 was separately checked with non-systemd container smoke tests;
-systemd and PHP-FPM on Ubuntu 22.04 were not tested. Preserve backups and test your own upgrade
-and rollback procedure before use.
+untrusted writers. Ubuntu 22.04 was separately checked in containers and in a later
+[clean-install VM test](ubuntu-22.04-beta5.md). Preserve backups and test your own upgrade and
+rollback procedure before use.

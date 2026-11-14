@@ -15,7 +15,8 @@ with Rust 1.88. Its three executables were checked against a GLIBC 2.35 symbol c
 22.04 and 24.04 containers, the actual archive passed checksum, version, configuration, static
 HTTP, streamed weak ETag, multipart range, gzip ETag, HTTP proxy and WebSocket smoke checks.
 These containers used a WSL2 Linux 6.6 kernel; they do not test a separate Ubuntu 22.04 kernel,
-systemd or PHP-FPM on Ubuntu 22.04. See the separate [Ubuntu 24.04 VM test](ubuntu-24.04-beta5.md)
+systemd or PHP-FPM on Ubuntu 22.04. A later [Ubuntu 22.04 VM test](ubuntu-22.04-beta5.md) covered
+a clean beta.5 installation with PHP 8.1. See the [Ubuntu 24.04 VM test](ubuntu-24.04-beta5.md)
 for the systemd/PHP-FPM upgrade and manual rollback exercise.
 
 ## ARM64 under emulation
