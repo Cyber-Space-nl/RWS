@@ -11,15 +11,12 @@ or Apache.
 reverse proxying and adaptive WebSocket scheduling. Configure the features you need in one
 configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
 
-The [v0.1.0-beta.2 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.2)
-provides experimental Linux x86-64 binaries and release notes. It predates the current `rws`
-binary, which is available from source and has not yet been published as a release.
-Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
+The [v0.1.0-beta.3 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.3)
+provides experimental Linux x86-64 binaries and release notes. Visit
+[rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
-**Release versus source:** the `v0.1.0-beta.2` prerelease includes single byte ranges,
-date-based conditional requests, optional gzip and optional Linux directory listings. The older
-`v0.1.0-beta.1` binaries do not include these features. The `main` branch builds the current
-`rws` binary from source.
+Beta.3 introduces the single `rws` server binary. The older beta.2 release contains separate
+server variants; existing installations require a manual migration and a tested rollback plan.
 
 ## Local quickstart
 
