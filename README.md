@@ -11,6 +11,11 @@ The [v0.1.0-beta.1 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/ta
 provides experimental Linux x86-64 binaries and release notes.
 Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
+**Release versus source:** the published `v0.1.0-beta.1` binaries predate the static-file
+features described below. Single byte ranges, date-based conditional requests, optional gzip
+and optional directory listings are currently available from the `main` branch; they have not
+yet been included in a published release.
+
 ## Local quickstart
 
 On Linux with Rust 1.88 or newer, run the included loopback-only example without root privileges:
@@ -30,6 +35,40 @@ curl -i http://127.0.0.1:19091/healthz
 
 Stop the server with Ctrl+C. The example serves `examples/site`; it does not enable PHP or TLS.
 For systemd installation, see [Ubuntu installation](UBUNTU_INSTALL.md).
+
+### Try the static-file features on `main`
+
+With the quickstart server running, request part of the example page:
+
+```bash
+curl -i -H 'Host: localhost' --range 0-15 http://127.0.0.1:18080/
+```
+
+The response should have status `206 Partial Content`, a `Content-Range` header and the first
+16 bytes of the page. To check a conditional request, obtain its `Last-Modified` date and send it
+back:
+
+```bash
+modified=$(curl -fsSI -H 'Host: localhost' http://127.0.0.1:18080/ | tr -d '\r' | sed -n 's/^[Ll]ast-[Mm]odified: //p')
+curl -i -H 'Host: localhost' -H "If-Modified-Since: $modified" http://127.0.0.1:18080/
+```
+
+If the file has not changed, the second response should be `304 Not Modified`. When the static
+cache is enabled, the response can reflect the cached file until its next revalidation.
+
+Gzip and directory listings are **disabled by default**. To try either feature, enable it in the
+existing static site's `[[sites]]` section of a local configuration file and restart RWS:
+
+```toml
+# Add only the features you want to enable inside [[sites]]:
+gzip = true
+directory_listing = true
+```
+
+After enabling gzip, `curl -i -H 'Host: localhost' --compressed http://127.0.0.1:18080/` should show
+`Content-Encoding: gzip` for the example page. Directory listings are Linux-only and expose
+visible filenames when a directory has no index file; enable them only where that is intended.
+See [Configuration](#configuration) for the size limits and other details.
 
 ## Documentation and platforms
 
