@@ -119,7 +119,7 @@ struct RunArgs {
     /// SSH destination used only for periodic read-only monitoring.
     #[arg(long)]
     monitor_ssh: Option<String>,
-    /// Exact process name to monitor, for example rws-simple or nginx.
+    /// Exact process name to monitor, for example rws or nginx.
     #[arg(long)]
     monitor_process: Option<String>,
     #[arg(long)]

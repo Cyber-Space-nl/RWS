@@ -11,8 +11,9 @@ messages. The adaptive controller changes its byte quantum from queue depth. It 
 ordinary HTTP connections. Consequently:
 
 - HTTP idle/mixed/overload tests compare the general server stacks.
-- Scheduler-on/off claims require an identical WebSocket workload on `rws-comfy`.
-- `rws-simple` cannot be described as “adaptive off”; it is a different build/feature set.
+- Scheduler-on/off claims require an identical WebSocket workload on the same `rws` build.
+- Change only the adaptive configuration between runs; do not compare different builds as if only
+  the controller changed.
 
 ## Runtime architecture
 

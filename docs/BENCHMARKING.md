@@ -6,7 +6,7 @@ comparisons; same-host results compete for CPU and are suitable only for smoke c
 
 ## Prepare equivalent targets
 
-1. Build both `rws-simple` and `rws-bench` with `cargo build --locked --release -p rws-simple -p rws-bench`.
+1. Build both `rws` and `rws-bench` with `cargo build --locked --release -p rws -p rws-bench`.
    Use the freshly built binary, not a historical binary in `dist`.
 2. Deploy the identical `tools/rws-bench/fixtures/robots.txt` to each test server's document root.
    Record its SHA-256 with `sha256sum`; configure identical host routing, HTTP/1.1, keep-alive,
@@ -24,8 +24,8 @@ comparisons; same-host results compete for CPU and are suitable only for smoke c
 
 ```bash
 mkdir results-run-001  # choose a new directory; do not overwrite historical results
-python3 tools/rws-bench/environment.py --role server --binary target/release/rws-simple \
-  --config config.simple.example.toml --notes 'Ubuntu; server version; CPU affinity; cache method' \
+python3 tools/rws-bench/environment.py --role server --binary target/release/rws \
+  --config config.example.toml --notes 'Ubuntu; server version; CPU affinity; cache method' \
   --output results-run-001/server.json
 python3 tools/rws-bench/environment.py --role generator --binary target/release/rws-bench \
   --notes 'generator host and network details' --output results-run-001/generator.json
@@ -76,7 +76,7 @@ deduplicates the cache keys. Then run:
 target/release/rws-bench run --target http://SERVER/robots.txt --host bench.local \
   --label rws-cold-files --connections 100 --active-percent 100 --idle-duration 0 \
   --active-duration 10 --rps 1000 --skip-warmup --unique-paths results-run-001/paths.txt \
-  --monitor-ssh USER@SERVER --monitor-process rws-simple --monitor-port 80 \
+  --monitor-ssh USER@SERVER --monitor-process rws --monitor-port 80 \
   --output results-run-001/cold-files-1.json
 ```
 
@@ -97,7 +97,7 @@ For a steady warm run, use the same workload and omit `--skip-warmup`:
 ```bash
 target/release/rws-bench run --target http://SERVER/robots.txt --host bench.local \
   --label rws-warm --connections 100 --active-percent 100 --idle-duration 0 \
-  --active-duration 15 --rps 1000 --monitor-ssh USER@SERVER --monitor-process rws-simple \
+  --active-duration 15 --rps 1000 --monitor-ssh USER@SERVER --monitor-process rws \
   --monitor-port 80 --output results-run-001/warm-1.json
 ```
 

@@ -1,6 +1,6 @@
 [Unit]
-Description=Rust WebServer Simple
-Documentation=file:/usr/share/doc/rws-simple/README.md
+Description=Rust WebServer
+Documentation=file:/usr/share/doc/rws/README.md
 After=network-online.target php8.3-fpm.service
 Wants=network-online.target
 
@@ -8,12 +8,12 @@ Wants=network-online.target
 Type=simple
 User=rws
 Group=rws
-ExecStart=/usr/local/bin/rws-simple --config /etc/rws-simple/config.toml
+ExecStart=/usr/local/bin/rws --config /etc/rws/config.toml
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=20s
 LimitNOFILE=262144
-LogsDirectory=rws-simple
+LogsDirectory=rws
 LogsDirectoryMode=0750
 NoNewPrivileges=true
 PrivateTmp=true

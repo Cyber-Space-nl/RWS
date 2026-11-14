@@ -2,8 +2,8 @@
 
 ## Workspace and request flow
 
-`rws-simple` and `rws-comfy` are thin binaries around `rws-core`. Simple uses the default core
-features; Comfy enables the optional HTTP reverse proxy and adaptive WebSocket scheduler controls.
+`rws` is the single server binary around `rws-core`. HTTP reverse proxying and adaptive WebSocket
+scheduler controls are available in the same build and enabled through configuration.
 The workspace also includes `rws-ws-load` and `rws-bench`, which are test tools, not services.
 
 At startup, RWS parses strict TOML configuration, validates sites and configured TLS files, builds
@@ -11,7 +11,7 @@ the site map, cache and scheduler, and starts HTTP, optional HTTPS and a separat
 The public router accepts the configured native WebSocket path and dispatches other requests by
 normalized Host. An unknown host receives 421. Static sites resolve a file beneath their root,
 optionally dispatch `.php` requests or missing routes to PHP-FPM, and serve other files for GET or
-HEAD. Comfy proxy sites send HTTP requests to their configured upstream.
+HEAD. Proxy sites send HTTP requests to their configured upstream.
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,7 @@ flowchart LR
   HTTP --> Route[Host routing]
   Route --> Static[Static files and cache]
   Route --> PHP[PHP-FPM]
-  Route --> Proxy[Comfy HTTP proxy]
+  Route --> Proxy[HTTP proxy]
   HTTP --> WS[Native WebSocket echo]
   WS --> Scheduler[Bounded outbound scheduler]
   Metrics[Separate metrics listener] --> Health[Health and metrics]
@@ -37,11 +37,11 @@ separately. See [security testing](SECURITY_TESTING.md) for trust boundaries and
 
 WebSocket sessions register with a shared ready-queue scheduler. Per-connection outbound queues
 and writer channels are bounded; a slow or disconnected peer can be rejected or disconnected.
-Comfy's optional controller adjusts scheduler quantum within configured limits. This scheduler does
+The optional controller adjusts scheduler quantum within configured limits. This scheduler does
 not schedule ordinary HTTP traffic or replace Tokio and kernel scheduling.
 
 PHP requests and proxy bodies are buffered with configurable per-request bounds. FastCGI response
-limits count protocol framing, headers and stderr as well as body bytes. The Comfy proxy filters
+limits count protocol framing, headers and stderr as well as body bytes. The proxy filters
 hop-by-hop and untrusted forwarding headers and does not support WebSocket proxying. These limits
 do not impose a global memory budget. `request_timeout_ms` covers HTTP/1 header reading, proxy and
 PHP request bodies, PHP operations and the configured proxy-client timeout; it is not a universal

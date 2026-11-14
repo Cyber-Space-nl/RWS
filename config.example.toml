@@ -1,31 +1,30 @@
 [server]
 listen = "0.0.0.0:8080"
 https_listen = "0.0.0.0:8443"
-max_in_flight_requests = 2048
-listen_backlog = 2048
-max_body_bytes = 16777216
-max_proxy_response_bytes = 16777216
-max_fastcgi_response_bytes = 16777216
+max_in_flight_requests = 1024
+listen_backlog = 1024
+max_body_bytes = 8388608
+max_fastcgi_response_bytes = 8388608
 request_timeout_ms = 30000
-shutdown_grace_period_s = 20
-json_logs = true
+shutdown_grace_period_s = 15
+json_logs = false
 
 [metrics]
 listen = "127.0.0.1:9091"
 
 [static_cache]
 enabled = true
-max_total_bytes = 134217728
-max_file_bytes = 2097152
-max_entries = 8192
+max_total_bytes = 67108864
+max_file_bytes = 1048576
+max_entries = 4096
 revalidate_after_ms = 1000
 
 [websocket]
 path = "/_rws/ws"
-outbound_queue_messages = 128
-outbound_queue_bytes = 524288
+outbound_queue_messages = 64
+outbound_queue_bytes = 262144
 scheduler_quantum_bytes = 16384
-per_turn_messages = 32
+per_turn_messages = 16
 
 [adaptive]
 enabled = false
@@ -36,8 +35,8 @@ queue_high_watermark = 128
 
 # Uncomment after installing a certificate.
 # [tls]
-# cert_file = "/etc/rws-comfy/tls/fullchain.pem"
-# key_file = "/etc/rws-comfy/tls/privkey.pem"
+# cert_file = "/etc/rws/tls/fullchain.pem"
+# key_file = "/etc/rws/tls/privkey.pem"
 
 [[sites]]
 host = "example.test"
@@ -49,10 +48,13 @@ index = "index.html"
 # directory_listing = true  # Linux only; exposes visible directory entries
 php = true
 php_fpm = "unix:/run/php/php8.3-fpm.sock"
-access_log = "/var/log/rws-comfy/example.test.access.log"
-error_log = "/var/log/rws-comfy/example.test.error.log"
+# Send requests for paths that do not exist to this PHP script.
+# front_controller = "index.php"
+# Optional per-site logs. Error logs contain requests with status 4xx or 5xx.
+# access_log = "/var/log/rws/example.test.access.log"
+# error_log = "/var/log/rws/example.test.error.log"
 
-# Comfy-only reverse proxy example:
+# Optional HTTP reverse proxy site:
 # [[sites]]
 # host = "app.example.test"
 # mode = "proxy"

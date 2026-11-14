@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 config=${1:-config.dev.wsl.toml}
 target_dir=${CARGO_TARGET_DIR:-target}
-"$target_dir/release/rws-simple" --config "$config" >/tmp/rws-smoke.log 2>&1 &
+"$target_dir/release/rws" --config "$config" >/tmp/rws-smoke.log 2>&1 &
 pid=$!
 cleanup() {
   kill -TERM "$pid" 2>/dev/null || true

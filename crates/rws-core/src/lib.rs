@@ -1,5 +1,4 @@
 mod config;
-#[cfg(feature = "comfy")]
 pub(crate) mod controller;
 mod metrics;
 mod scheduler;
@@ -14,45 +13,18 @@ use tracing_subscriber::EnvFilter;
 
 pub use config::Config;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Flavor {
-    Simple,
-    Comfy,
-}
-
-impl Flavor {
-    fn binary(self) -> &'static str {
-        match self {
-            Self::Simple => "rws-simple",
-            Self::Comfy => "rws-comfy",
-        }
-    }
-
-    fn default_config(self) -> &'static str {
-        match self {
-            Self::Simple => "/etc/rws-simple/config.toml",
-            Self::Comfy => "/etc/rws-comfy/config.toml",
-        }
-    }
-}
-
-pub async fn run(flavor: Flavor) -> Result<()> {
-    #[cfg(not(feature = "comfy"))]
-    if flavor == Flavor::Comfy {
-        bail!("rws-comfy requires the comfy build feature");
-    }
-
-    let mut config_path = PathBuf::from(flavor.default_config());
+pub async fn run() -> Result<()> {
+    let mut config_path = PathBuf::from("/etc/rws/config.toml");
     let mut check = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
-                print_help(flavor);
+                print_help();
                 return Ok(());
             }
             "-V" | "--version" => {
-                println!("{} {}", flavor.binary(), env!("CARGO_PKG_VERSION"));
+                println!("rws {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--check" => check = true,
@@ -71,7 +43,7 @@ pub async fn run(flavor: Flavor) -> Result<()> {
     }
     init_tracing(config.server.json_logs)?;
     tracing::info!(
-        binary = flavor.binary(),
+        binary = "rws",
         config = %config_path.display(),
         "Rust WebServer starting"
     );
@@ -96,15 +68,9 @@ fn init_tracing(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_help(flavor: Flavor) {
+fn print_help() {
     println!(
-        "{binary} {version}\nRust WebServer ({kind})\n\nUSAGE:\n    {binary} [OPTIONS]\n\nOPTIONS:\n    -c, --config PATH   Configuration file [default: {config}]\n        --check         Validate configuration and exit\n    -h, --help          Print help\n    -V, --version       Print version",
-        binary = flavor.binary(),
+        "rws {version}\nRust WebServer\n\nUSAGE:\n    rws [OPTIONS]\n\nOPTIONS:\n    -c, --config PATH   Configuration file [default: /etc/rws/config.toml]\n        --check         Validate configuration and exit\n    -h, --help          Print help\n    -V, --version       Print version",
         version = env!("CARGO_PKG_VERSION"),
-        kind = match flavor {
-            Flavor::Simple => "simple",
-            Flavor::Comfy => "comfy",
-        },
-        config = flavor.default_config(),
     );
 }

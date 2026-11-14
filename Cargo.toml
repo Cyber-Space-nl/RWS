@@ -1,15 +1,14 @@
 [workspace]
 members = [
     "crates/rws-core",
-    "crates/rws-simple",
-    "crates/rws-comfy",
+    "crates/rws",
     "tools/rws-ws-load",
     "tools/rws-bench",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 edition = "2024"
 license = "MIT"
 rust-version = "1.88"

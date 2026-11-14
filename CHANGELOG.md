@@ -2,6 +2,14 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## Unreleased
+
+### Changed
+
+- Replaced the Simple and Comfy server variants with a single `rws` binary and service. HTTP
+  proxying and adaptive scheduling remain available as optional configuration. This is a
+  breaking change to binary, service and configuration paths; migration is manual.
+
 ## 0.1.0-beta.2 — 2026-11-14
 
 ### Added

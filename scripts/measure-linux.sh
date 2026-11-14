@@ -2,8 +2,8 @@
 set -euo pipefail
 
 target_dir=${CARGO_TARGET_DIR:-target}
-binary=${1:-"$target_dir/release/rws-simple"}
-config=${2:-./config.simple.example.toml}
+binary=${1:-"$target_dir/release/rws"}
+config=${2:-./config.example.toml}
 [ -x "$binary" ] || { echo "Binary not executable: $binary" >&2; exit 1; }
 
 echo "binary_bytes=$(stat -c %s "$binary")"

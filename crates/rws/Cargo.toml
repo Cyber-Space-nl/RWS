@@ -1,5 +1,5 @@
 [package]
-name = "rws-comfy"
+name = "rws"
 description = "Rust WebServer with optional proxy and adaptive scheduling"
 version.workspace = true
 edition.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1.0"
-rws-core = { path = "../rws-core", features = ["comfy"] }
+rws-core = { path = "../rws-core" }
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]

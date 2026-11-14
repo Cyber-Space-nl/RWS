@@ -54,8 +54,7 @@ struct AppState {
     request_permits: Arc<Semaphore>,
     compression_permits: Arc<Semaphore>,
     scheduler: SchedulerHandle,
-    #[cfg(feature = "comfy")]
-    proxy_client: reqwest::Client,
+    proxy_client: Option<reqwest::Client>,
 }
 
 pub async fn serve(config: Config) -> Result<()> {
@@ -76,14 +75,9 @@ pub async fn serve(config: Config) -> Result<()> {
         request_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests)),
         compression_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(16))),
         scheduler,
-        #[cfg(feature = "comfy")]
-        proxy_client: reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(config.request_timeout())
-            .build()?,
+        proxy_client: build_proxy_client(&config)?,
     };
 
-    #[cfg(feature = "comfy")]
     crate::controller::start_if_enabled(Arc::clone(&config), Arc::clone(&metrics));
 
     let app = public_router(&config, state.clone());
@@ -170,6 +164,18 @@ pub async fn serve(config: Config) -> Result<()> {
     .await;
     info!("shutdown complete");
     Ok(())
+}
+
+fn build_proxy_client(config: &Config) -> Result<Option<reqwest::Client>> {
+    if !config.sites.iter().any(|site| site.mode == SiteMode::Proxy) {
+        return Ok(None);
+    }
+    Ok(Some(
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(config.request_timeout())
+            .build()?,
+    ))
 }
 
 fn bind_listener(address: std::net::SocketAddr, backlog: u32) -> std::io::Result<TcpListener> {
@@ -352,7 +358,6 @@ async fn dispatch_request(State(state): State<AppState>, request: Request) -> Re
     let request_log = RequestLogInfo::capture(site, &request);
     let mut response = match site.config.mode {
         SiteMode::Static => static_or_php(&state, site, request).await,
-        #[cfg(feature = "comfy")]
         SiteMode::Proxy => match state.request_permits.try_acquire() {
             Ok(_permit) => proxy_request(&state, site, request).await,
             Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response(),
@@ -1474,7 +1479,6 @@ async fn websocket_session(state: AppState, socket: axum::extract::ws::WebSocket
         .fetch_sub(1, Ordering::Relaxed);
 }
 
-#[cfg(feature = "comfy")]
 async fn proxy_request(state: &AppState, site: &Site, request: Request) -> Response {
     let Some(upstream) = site.config.upstream.as_deref() else {
         return counted_error(state, StatusCode::BAD_GATEWAY, "upstream missing");
@@ -1498,7 +1502,10 @@ async fn proxy_request(state: &AppState, site: &Site, request: Request) -> Respo
         }
         Err(_) => return (StatusCode::REQUEST_TIMEOUT, "request body timeout").into_response(),
     };
-    let mut outgoing = state.proxy_client.request(parts.method, url).body(body);
+    let Some(client) = &state.proxy_client else {
+        return counted_error(state, StatusCode::BAD_GATEWAY, "proxy client unavailable");
+    };
+    let mut outgoing = client.request(parts.method, url).body(body);
     for (name, value) in &parts.headers {
         if !is_hop_by_hop(name)
             && !connection_names_header(&parts.headers, name)
@@ -1549,7 +1556,6 @@ async fn proxy_request(state: &AppState, site: &Site, request: Request) -> Respo
     response
 }
 
-#[cfg(feature = "comfy")]
 fn connection_names_header(headers: &HeaderMap, name: &axum::http::HeaderName) -> bool {
     headers
         .get_all(header::CONNECTION)
@@ -1559,12 +1565,10 @@ fn connection_names_header(headers: &HeaderMap, name: &axum::http::HeaderName) -
         .any(|token| token.trim().eq_ignore_ascii_case(name.as_str()))
 }
 
-#[cfg(feature = "comfy")]
 fn is_untrusted_forwarding_header(name: &axum::http::HeaderName) -> bool {
     name.as_str().starts_with("x-forwarded-") || matches!(name.as_str(), "forwarded" | "x-real-ip")
 }
 
-#[cfg(feature = "comfy")]
 fn is_hop_by_hop(name: &axum::http::HeaderName) -> bool {
     matches!(
         name.as_str(),
@@ -1592,7 +1596,6 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[cfg(feature = "comfy")]
     #[tokio::test]
     async fn proxy_limits_upstream_responses_and_strips_untrusted_headers() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1655,7 +1658,6 @@ mod tests {
         task.abort();
     }
 
-    #[cfg(feature = "comfy")]
     #[tokio::test]
     async fn proxy_times_out_slow_request_body() {
         let config: Config = toml::from_str(
@@ -1731,11 +1733,27 @@ mod tests {
                 config.server.max_in_flight_requests.min(16),
             )),
             scheduler: SchedulerHandle::start(config.websocket.clone(), Arc::clone(&metrics)),
+            proxy_client: build_proxy_client(&config).unwrap(),
             config,
             metrics,
-            #[cfg(feature = "comfy")]
-            proxy_client: reqwest::Client::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn proxy_client_is_only_created_for_proxy_sites() {
+        let directory = tempdir().unwrap();
+        let static_config: Config = toml::from_str(&format!(
+            "[[sites]]\nhost='example.test'\nroot='{}'\n",
+            directory.path().display()
+        ))
+        .unwrap();
+        assert!(build_proxy_client(&static_config).unwrap().is_none());
+        let proxy_config: Config = toml::from_str(
+            "[[sites]]\nhost='example.test'\nmode='proxy'\nupstream='http://127.0.0.1:8080'\n",
+        )
+        .unwrap();
+        crate::tls::ensure_crypto_provider();
+        assert!(build_proxy_client(&proxy_config).unwrap().is_some());
     }
 
     #[tokio::test]

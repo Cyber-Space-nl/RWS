@@ -7,13 +7,21 @@ PHP-FPM applications, provides a native WebSocket echo endpoint, and offers an o
 reverse proxy. It is an MVP for testing and measurement, not yet a drop-in replacement for Nginx
 or Apache.
 
+**One server build:** `rws` combines static files, PHP-FPM and WebSocket echo with optional
+reverse proxying and adaptive WebSocket scheduling. Configure the features you need in one
+configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
+
 The [v0.1.0-beta.2 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.2)
-provides experimental Linux x86-64 binaries and release notes.
+provides experimental Linux x86-64 binaries and release notes. It predates the unified `rws`
+binary and contains the earlier Simple and Comfy variants. The unified build is available from
+the current source and has not yet been published as a release.
 Visit [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
 **Release versus source:** the `v0.1.0-beta.2` prerelease includes single byte ranges,
 date-based conditional requests, optional gzip and optional Linux directory listings. The older
-`v0.1.0-beta.1` binaries do not include these features. The `main` branch may contain later changes.
+`v0.1.0-beta.1` binaries do not include these features. The `main` branch contains a later,
+breaking change to one `rws` binary, service and configuration path; see the
+[migration guide](UBUNTU_INSTALL.md#migrating-from-simple-or-comfy).
 
 ## Local quickstart
 
@@ -22,7 +30,7 @@ On Linux with Rust 1.88 or newer, run the included loopback-only example without
 ```bash
 git clone https://github.com/Cyber-Space-nl/RWS.git
 cd RWS
-cargo run --locked -p rws-simple -- --config config.dev.wsl.toml
+cargo run --locked -p rws -- --config config.dev.wsl.toml
 ```
 
 In another terminal:
@@ -110,9 +118,9 @@ memory leaks.
 
 ## Workspace components
 
-- **`rws-core`** — shared library containing configuration, HTTP/WebSocket handling, scheduling, metrics and server lifecycle logic. It is linked into the server binaries and is not installed as a separate service.
-- **`rws-simple`** — the default lightweight server binary, with a strict configuration surface and minimal enabled functionality.
-- **`rws-comfy`** — the extended server binary, with reverse proxy support and optional adaptive scheduler tuning.
+- **`rws`** — the single web server, with static files, PHP-FPM, WebSocket echo and optional
+  HTTP reverse proxy and adaptive scheduler tuning.
+- **`rws-core`** — the shared library linked into `rws`; it is not a separate service.
 - **`rws-ws-load`** — development tool that creates concurrent WebSocket connections and messages to measure behavior, performance and stability. It is not a production service.
 - **`rws-bench`** — guarded native Linux HTTP/1.1 keep-alive scalability benchmark with
   resource checks, SSH monitoring, raw JSON and deterministic Markdown comparison reports.
@@ -140,8 +148,8 @@ memory leaks.
 - Optional asynchronous access and error logs per virtual host.
 - Configurable TCP listen backlog for HTTP connections.
 - Sharded atomic request and cache counters to reduce contention on busy paths.
-- Comfy-only HTTP reverse proxy and bounded adaptive quantum controller.
-- Separate Ubuntu installers and hardened systemd units.
+- Optional HTTP reverse proxy and bounded adaptive quantum controller.
+- An Ubuntu installer and hardened systemd unit.
 - A guarded WebSocket load tool.
 
 ## Explicit MVP limitations
@@ -159,7 +167,7 @@ memory leaks.
 - PHP routing supports direct `.php` script paths and an optional per-site front-controller fallback; PATH_INFO is not implemented.
 - PHP-FPM response buffering is limited by `max_fastcgi_response_bytes` (default 8 MiB), which
   counts FastCGI framing, headers and stderr as well as the body. Oversized responses return 502.
-- Comfy HTTP proxy buffers request and response bodies up to `max_body_bytes` and `max_proxy_response_bytes`, respectively, and does not proxy WebSocket upgrades. The latter defaults to 8 MiB; oversized upstream responses return 502. These limits are per request, not global process memory limits.
+- The HTTP proxy buffers request and response bodies up to `max_body_bytes` and `max_proxy_response_bytes`, respectively, and does not proxy WebSocket upgrades. The latter defaults to 8 MiB; oversized upstream responses return 502. These limits are per request, not global process memory limits.
 - The proxy strips client-supplied `Forwarded`, `X-Forwarded-*` and `X-Real-IP` headers; it does not currently generate trusted forwarding headers. Backends must not rely on them for client identity.
 - The scheduler currently governs native WebSocket outbound application messages; it does not replace Tokio or kernel scheduling.
 - Metrics are counters/gauges only; latency histograms are still pending.
@@ -180,7 +188,7 @@ project VPS:
   `8104bb0910485098a4990b085c5ee56003029e1305ed6d2603b4c34c13225508`.
 - The final smoke check recorded 20 cache hits and one miss, with no bypasses, evictions,
   invalidations or service errors.
-- The current `rws-*` naming release has not been redeployed by this repository-only rename.
+- This historical deployment predates the unified `rws` binary and was not automatically migrated.
 
 These are historical observations, not a statement about the current server or a current release.
 Check the CI badge for the latest automated status; [security testing](docs/SECURITY_TESTING.md)
@@ -212,11 +220,11 @@ From the project directory:
 chmod +x scripts/*.sh
 cargo fmt --check
 cargo test --workspace
-./scripts/build-linux.sh simple
-sudo ./scripts/install-simple.sh
-sudoedit /etc/rws-simple/config.toml
-sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
-sudo systemctl enable --now rws-simple
+./scripts/build-linux.sh
+sudo ./scripts/install.sh
+sudoedit /etc/rws/config.toml
+sudo /usr/local/bin/rws --config /etc/rws/config.toml --check
+sudo systemctl enable --now rws
 ```
 
 `--check` validates TOML and loads configured TLS files; it does not prove that the service account
@@ -229,7 +237,7 @@ Test the default example vhost:
 curl -i -H 'Host: example.test' http://127.0.0.1:8080/
 curl -i http://127.0.0.1:9091/healthz
 curl -s http://127.0.0.1:9091/metrics
-sudo journalctl -u rws-simple -f
+sudo journalctl -u rws -f
 ```
 
 To enable the PHP sample in an isolated test environment:
@@ -248,32 +256,25 @@ If Ubuntu uses a different PHP-FPM socket, find it and update `php_fpm`:
 find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' -print
 ```
 
-## Comfy installation
+## Migrating an existing installation
 
-`rws-comfy` is installed independently. Stop Simple first if both configs use the same ports:
-
-```bash
-./scripts/build-linux.sh comfy
-sudo ./scripts/install-comfy.sh
-sudoedit /etc/rws-comfy/config.toml
-sudo /usr/local/bin/rws-comfy --config /etc/rws-comfy/config.toml --check
-sudo systemctl disable --now rws-simple 2>/dev/null || true
-sudo systemctl enable --now rws-comfy
-```
+The unified build does not replace or migrate existing `rws-simple` or `rws-comfy` services
+automatically. Follow the [migration and rollback guide](UBUNTU_INSTALL.md#migrating-from-simple-or-comfy)
+before changing an existing installation.
 
 ## TLS
 
-Place certificate files in the selected variant's `tls` directory, enable the `[tls]` section and restart:
+Place certificate files in the RWS `tls` directory, enable the `[tls]` section and restart:
 
 ```toml
 [tls]
-cert_file = "/etc/rws-simple/tls/fullchain.pem"
-key_file = "/etc/rws-simple/tls/privkey.pem"
+cert_file = "/etc/rws/tls/fullchain.pem"
+key_file = "/etc/rws/tls/privkey.pem"
 ```
 
 ```bash
-sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
-sudo systemctl restart rws-simple
+sudo /usr/local/bin/rws --config /etc/rws/config.toml --check
+sudo systemctl restart rws
 ```
 
 RWS does not issue certificates in this MVP. Use an external ACME client and ensure the `rws` service account can read the deployed key through an appropriately restricted group or copied file.
@@ -282,8 +283,7 @@ RWS does not issue certificates in this MVP. Use an external ACME client and ens
 
 Start with:
 
-- `config.simple.example.toml`
-- `config.comfy.example.toml`
+- `config.example.toml`
 
 Static sites support a single byte range for GET and `Last-Modified` / `If-Modified-Since`
 conditional requests. Multiple ranges and `If-Range` are ignored and receive the full response;
@@ -352,8 +352,8 @@ PHP endpoints use one of these forms:
 php_fpm = "unix:/run/php/php8.3-fpm.sock"
 # Optional fallback for application routes such as /login:
 front_controller = "index.php"
-access_log = "/var/log/rws-simple/example.test.access.log"
-error_log = "/var/log/rws-simple/example.test.error.log"
+access_log = "/var/log/rws/example.test.access.log"
+error_log = "/var/log/rws/example.test.error.log"
 # or
 php_fpm = "tcp:127.0.0.1:9000"
 ```
@@ -363,7 +363,7 @@ HTTP version, status, response length when known and request duration. Error log
 4xx/5xx requests plus available internal PHP, static-file and proxy errors. The Ubuntu units
 create the writable log directory and the installer configures daily rotation.
 
-Comfy proxy site:
+Optional proxy site:
 
 ```toml
 [[sites]]
@@ -387,17 +387,17 @@ cargo run -p rws-ws-load -- \
 
 Tests above 10,000 connections require the explicit `--allow-large-test` flag. Never start a 100k test without preparing file-descriptor, memory, port-range and load-generator capacity.
 
-## Measure Simple
+## Measure RWS
 
 Build and run the installed configuration as a non-production test:
 
 ```bash
-./scripts/build-linux.sh simple
-./scripts/measure-linux.sh ./target/release/rws-simple /etc/rws-simple/config.toml
+./scripts/build-linux.sh
+./scripts/measure-linux.sh ./target/release/rws /etc/rws/config.toml
 ```
 
 For a host-specific production binary, build on the target VPS with
-`RWS_NATIVE_CPU=1 ./scripts/build-linux.sh simple`. Release builds use fat LTO. A native build may
+`RWS_NATIVE_CPU=1 ./scripts/build-linux.sh`. Release builds use fat LTO. A native build may
 not run on an older or different CPU, so keep the portable rollback binary.
 
 Profile-guided optimization (PGO) is not enabled. It should only be added with a representative
@@ -420,28 +420,27 @@ the server for CPU. Benchmark static HTTP, TLS, PHP and WebSockets separately.
 
 ## Upgrade and rollback
 
-The installers back up an existing binary and unit with a timestamp and preserve existing
-configuration. They overwrite the logrotate file without backing it up. Before upgrading, back up
+The installer backs up an existing binary, unit and logrotate file with a timestamp and preserves existing
+configuration. Before upgrading, back up
 configuration, logrotate settings and site data separately. To roll back, stop the service, restore
 the matching binary and unit backups, reload systemd and restart:
 
 ```bash
-sudo systemctl stop rws-simple
-sudo cp -a /usr/local/bin/rws-simple.backup.TIMESTAMP /usr/local/bin/rws-simple
-sudo cp -a /etc/systemd/system/rws-simple.service.backup.TIMESTAMP /etc/systemd/system/rws-simple.service
+sudo systemctl stop rws
+sudo cp -a /usr/local/bin/rws.backup.TIMESTAMP /usr/local/bin/rws
+sudo cp -a /etc/systemd/system/rws.service.backup.TIMESTAMP /etc/systemd/system/rws.service
 sudo systemctl daemon-reload
-sudo systemctl start rws-simple
+sudo systemctl start rws
 ```
 
 ## Uninstall
 
 ```bash
-sudo ./scripts/uninstall.sh simple
-# or
-sudo ./scripts/uninstall.sh comfy
+sudo ./scripts/uninstall.sh
 ```
 
-The uninstall script preserves `/etc/rws-*` and `/var/www` data.
+The uninstall script preserves `/etc/rws`, logs and `/var/www` data. It does not remove legacy
+Simple or Comfy installations.
 
 ## Developer checks
 
@@ -452,13 +451,11 @@ cargo fmt --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo build --release -p rws-simple
-cargo build --release -p rws-comfy
-cargo tree -p rws-simple -e features
-cargo tree -p rws-comfy -e features
+cargo build --release -p rws
+cargo tree -p rws -e features
 ```
 
-Build each release package separately when comparing dependencies and binary sizes so Cargo feature unification cannot distort the comparison.
+The WebSocket and benchmark tools remain separate development tools, not alternate servers.
 
 ## License
 

@@ -13,9 +13,9 @@ import subprocess
 import tarfile
 import tempfile
 
-VERSION = '0.1.0-beta.2'
+VERSION = '0.1.0-beta.3'
 TARGET = 'x86_64-unknown-linux-gnu'
-BINARIES = ('rws-simple', 'rws-comfy', 'rws-ws-load', 'rws-bench')
+BINARIES = ('rws', 'rws-ws-load', 'rws-bench')
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -85,7 +85,7 @@ def main():
                 raise RuntimeError(f'unexpected {binary} version: {version}')
             shutil.copy2(source_binary, bundle / 'bin' / binary)
         for path in ('LICENSE', 'README.md', 'UBUNTU_INSTALL.md', 'CHANGELOG.md', 'SECURITY.md',
-                     'CONTRIBUTING.md', 'Cargo.lock', 'config.simple.example.toml', 'config.comfy.example.toml',
+                     'CONTRIBUTING.md', 'Cargo.lock', 'config.example.toml',
                      'RWS_NGINX_APACHE_BENCHMARK.html', 'RWS_MEMORY_STABILITY_20M.html'):
             shutil.copy2(source / path, bundle / path)
         shutil.copytree(source / 'docs', bundle / 'docs')

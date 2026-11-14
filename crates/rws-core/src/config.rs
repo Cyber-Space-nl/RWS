@@ -19,7 +19,6 @@ pub struct Config {
     #[serde(default)]
     pub websocket: WebSocketConfig,
     pub tls: Option<TlsConfig>,
-    #[cfg(feature = "comfy")]
     #[serde(default)]
     pub adaptive: AdaptiveConfig,
     pub sites: Vec<SiteConfig>,
@@ -122,7 +121,6 @@ pub struct TlsConfig {
     pub key_file: PathBuf,
 }
 
-#[cfg(feature = "comfy")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AdaptiveConfig {
@@ -133,7 +131,6 @@ pub struct AdaptiveConfig {
     pub queue_high_watermark: usize,
 }
 
-#[cfg(feature = "comfy")]
 impl Default for AdaptiveConfig {
     fn default() -> Self {
         Self {
@@ -150,7 +147,6 @@ impl Default for AdaptiveConfig {
 #[serde(rename_all = "lowercase")]
 pub enum SiteMode {
     Static,
-    #[cfg(feature = "comfy")]
     Proxy,
 }
 
@@ -183,7 +179,6 @@ pub struct SiteConfig {
     pub front_controller: Option<String>,
     pub access_log: Option<PathBuf>,
     pub error_log: Option<PathBuf>,
-    #[cfg(feature = "comfy")]
     pub upstream: Option<String>,
 }
 
@@ -277,7 +272,6 @@ impl Config {
                         }
                     }
                 }
-                #[cfg(feature = "comfy")]
                 SiteMode::Proxy => {
                     let upstream = site
                         .upstream
@@ -304,7 +298,6 @@ impl Config {
         {
             bail!("TLS certificate or key file does not exist");
         }
-        #[cfg(feature = "comfy")]
         if self.adaptive.enabled
             && (self.adaptive.interval_ms < 100
                 || self.adaptive.min_quantum_bytes == 0

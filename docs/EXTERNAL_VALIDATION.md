@@ -1,5 +1,8 @@
 # Independent validation checklist — RWS beta
 
+This checklist targets the unified `rws` build. For older Simple/Comfy releases, use the checklist
+from the corresponding release tag.
+
 This is a procedure for an independent developer; unchecked items are **not evidence that a test
 passed**. Record `PASS`, `FAIL` or `NOT RUN`, the date, commands, results and evidence for each
 item. Report failures and limitations, not just successes. This checklist does not authorise
@@ -12,7 +15,7 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
 ## 0. Test environment and evidence
 
 - [ ] **[Manual]** Use a fresh, disposable Ubuntu 24.04 x86-64 VM with systemd and Linux 5.6+.
-  These steps install packages, create `/etc/rws-*` and `/var/www/example.test`, change services
+  These steps install packages, create `/etc/rws` and `/var/www/example.test`, change services
   and exercise load. Do not run them on a production or shared machine. Use a separate authorised
   load generator for comparative benchmarks. Verify ports 8080, 8443 and 9091 are free.
 - [ ] **[Manual]** Obtain the approved source revision and, if supplied, the candidate archive and
@@ -39,7 +42,7 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
 - [ ] **[Command]** If given the standalone archive, obtain its expected checksum through a trusted
   channel, compare it with the supplied `SHA256SUMS`, and run `sha256sum -c SHA256SUMS` in the
   artifact directory. Extract into a new directory, run `sha256sum -c BINARY_SHA256SUMS` inside it,
-  then run each `bin/rws-* --version` explicitly. All four must report the version of the selected
+  then run each binary's `--version` explicitly. All three must report the version of the selected
   release. SHA-256
   detects changes but is not a signature: an attacker who can replace both files can replace both
   hashes. The `v0.1.0-beta.1` package built on Ubuntu 24.04 requires GLIBC symbols up to 2.39;
@@ -48,17 +51,17 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
 
   ```bash
   sha256sum -c BINARY_SHA256SUMS
-  for name in rws-simple rws-comfy rws-ws-load rws-bench; do "./bin/$name" --version; done
+  for name in rws rws-ws-load rws-bench; do "./bin/$name" --version; done
   cat BUILD_INFO.json
   ```
 
   Return to the source checkout before continuing.
 - [ ] **[Command + Manual]** In the source checkout, install the prerequisites and follow
-  [Ubuntu installation](../UBUNTU_INSTALL.md) for Simple. Before starting the service, edit the
-  test site host in `/etc/rws-simple/config.toml` to `localhost`; keep its root at
+  [Ubuntu installation](../UBUNTU_INSTALL.md) for RWS. Before starting the service, edit the
+  test site host in `/etc/rws/config.toml` to `localhost`; keep its root at
   `/var/www/example.test/public` and PHP enabled for the PHP test below. Validate with
-  `sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check`, start the service,
-  and inspect `sudo systemctl status rws-simple` and `sudo journalctl -u rws-simple -b`. Expect an
+  `sudo /usr/local/bin/rws --config /etc/rws/config.toml --check`, start the service,
+  and inspect `sudo systemctl status rws` and `sudo journalctl -u rws -b`. Expect an
   active service without startup errors. Install PHP-FPM as described in the installation guide;
   confirm its Unix socket matches the configuration. The archive does not contain a systemd
   installer; the installers run from a source checkout with its own `target/release/` binaries.
@@ -80,7 +83,7 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   [CONTRIBUTING.md](../CONTRIBUTING.md). Each command must exit successfully. Record warnings and
   tool versions; a missing tool or unavailable advisory database means `NOT RUN`, not a pass.
 - [ ] **[Command]** After stopping the systemd service or changing ports to avoid conflicts, run
-  `./scripts/build-linux.sh all` followed by `./scripts/smoke-test.sh` from the checkout root.
+  `./scripts/build-linux.sh` followed by `./scripts/smoke-test.sh` from the checkout root.
   The smoke script uses loopback ports 18080/19091 and fixed files in `/tmp`; use only the isolated
   VM. Expect HTTP 200, unknown host 421, health `ok`, 20 WebSocket connections, 100 echoed
   messages, zero connection errors, zero remaining WebSockets and clean shutdown. It does not test
@@ -106,10 +109,10 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   sudo apt install -y openssl
   sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
     -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' \
-    -keyout /etc/rws-simple/tls/test-key.pem -out /etc/rws-simple/tls/test-cert.pem
-  sudo chown root:rws /etc/rws-simple/tls/test-key.pem
-  sudo chmod 0640 /etc/rws-simple/tls/test-key.pem
-  sudo chmod 0644 /etc/rws-simple/tls/test-cert.pem
+    -keyout /etc/rws/tls/test-key.pem -out /etc/rws/tls/test-cert.pem
+  sudo chown root:rws /etc/rws/tls/test-key.pem
+  sudo chmod 0640 /etc/rws/tls/test-key.pem
+  sudo chmod 0644 /etc/rws/tls/test-cert.pem
   ```
 
   Replace the existing commented TLS example with the following section, validate the config and
@@ -117,14 +120,14 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
 
   ```toml
   [tls]
-  cert_file = "/etc/rws-simple/tls/test-cert.pem"
-  key_file = "/etc/rws-simple/tls/test-key.pem"
+  cert_file = "/etc/rws/tls/test-cert.pem"
+  key_file = "/etc/rws/tls/test-key.pem"
   ```
 
   Then run:
 
   ```bash
-  curl --fail --noproxy '*' --cacert /etc/rws-simple/tls/test-cert.pem \
+  curl --fail --noproxy '*' --cacert /etc/rws/tls/test-cert.pem \
     --resolve localhost:8443:127.0.0.1 https://localhost:8443/
   ```
 
@@ -162,7 +165,7 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   ```bash
   target/release/rws-bench run --target http://127.0.0.1:8080/ --host localhost \
     --label local-smoke --connections 5 --active-percent 100 --idle-duration 0 \
-    --active-duration 3 --rps 10 --monitor-process rws-simple --monitor-port 8080 \
+    --active-duration 3 --rps 10 --monitor-process rws --monitor-port 8080 \
     --output "$EVIDENCE/load.json"
   target/release/rws-bench report "$EVIDENCE/load.json" --output "$EVIDENCE/load.md"
   ```
@@ -181,7 +184,7 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   ```
 
   Poll the metrics endpoint until active connections are observed, then run
-  `sudo systemctl stop rws-simple` and confirm it stops within the configured grace period plus a
+  `sudo systemctl stop rws` and confirm it stops within the configured grace period plus a
   small scheduling margin. Wait for the load process and record its exit status and log: clients
   may report disconnects because shutdown was intentional. Inspect the service journal for a
   clean shutdown and restart the service. This bounded test is not sustained overload validation.
@@ -197,15 +200,15 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   record revisions, version output and hashes. If no suitable earlier build exists, mark the
   cross-version upgrade `NOT RUN`. A reinstall of the same build tests the installer mechanics only.
 - [ ] **[Manual]** Before upgrading, make separate verified backups of the installed binary, unit,
-  config, logrotate file and site data. The installers back up an existing binary and unit, preserve
-  config, and overwrite logrotate without backing it up. Do not rely solely on their automatic
+  config, logrotate file and site data. The installer backs up an existing binary, unit and logrotate file, preserves
+  config, and leaves existing legacy services untouched. Do not rely solely on its automatic
   backups. In the disposable VM, for example:
 
   ```bash
-  sudo cp -a /usr/local/bin/rws-simple "$EVIDENCE/before-binary"
-  sudo cp -a /etc/systemd/system/rws-simple.service "$EVIDENCE/before-unit"
-  sudo cp -a /etc/rws-simple/config.toml "$EVIDENCE/before-config"
-  sudo cp -a /etc/logrotate.d/rws-simple "$EVIDENCE/before-logrotate"
+  sudo cp -a /usr/local/bin/rws "$EVIDENCE/before-binary"
+  sudo cp -a /etc/systemd/system/rws.service "$EVIDENCE/before-unit"
+  sudo cp -a /etc/rws/config.toml "$EVIDENCE/before-config"
+  sudo cp -a /etc/logrotate.d/rws "$EVIDENCE/before-logrotate"
   sudo cp -a /var/www/example.test "$EVIDENCE/before-site"
   sudo sha256sum "$EVIDENCE/before-binary" "$EVIDENCE/before-unit" \
     "$EVIDENCE/before-config" "$EVIDENCE/before-logrotate" >"$EVIDENCE/before-sha256.txt"
@@ -214,20 +217,20 @@ in the repository's GitHub Actions workflow. A passing CI run does not replace t
   Verify the backups exist and record hashes outside the site root. Preserve TLS keys separately
   when they are needed for recovery; do not include them in a shared report.
 - [ ] **[Manual + Command]** Stop the service, install the candidate from its source checkout with
-  the appropriate `scripts/install-*.sh`, confirm the existing config is preserved, run `--check`,
+  `scripts/install.sh`, confirm the existing config is preserved, run `--check`,
   start it, and repeat HTTP, health, PHP and WebSocket checks. Record hashes and service logs.
 - [ ] **[Manual + Command]** Stop the service and restore the matched backups made above:
 
   ```bash
-  sudo systemctl stop rws-simple
-  sudo cp -a "$EVIDENCE/before-binary" /usr/local/bin/rws-simple
-  sudo cp -a "$EVIDENCE/before-unit" /etc/systemd/system/rws-simple.service
-  sudo cp -a "$EVIDENCE/before-config" /etc/rws-simple/config.toml
-  sudo cp -a "$EVIDENCE/before-logrotate" /etc/logrotate.d/rws-simple
+  sudo systemctl stop rws
+  sudo cp -a "$EVIDENCE/before-binary" /usr/local/bin/rws
+  sudo cp -a "$EVIDENCE/before-unit" /etc/systemd/system/rws.service
+  sudo cp -a "$EVIDENCE/before-config" /etc/rws/config.toml
+  sudo cp -a "$EVIDENCE/before-logrotate" /etc/logrotate.d/rws
   sudo systemctl daemon-reload
-  sudo systemctl start rws-simple
-  sudo sha256sum /usr/local/bin/rws-simple /etc/systemd/system/rws-simple.service \
-    /etc/rws-simple/config.toml /etc/logrotate.d/rws-simple
+  sudo systemctl start rws
+  sudo sha256sum /usr/local/bin/rws /etc/systemd/system/rws.service \
+    /etc/rws/config.toml /etc/logrotate.d/rws
   ```
 
   Compare the output with `before-sha256.txt`; the paths differ but each corresponding hash should

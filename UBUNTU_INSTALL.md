@@ -1,24 +1,15 @@
-# Rust WebServer (RWS) — Ubuntu 24.04 installation
+# RWS — Ubuntu 24.04 installation
 
-## Components
+RWS provides one web-server binary, `rws`. Static files, PHP-FPM and WebSocket echo are available;
+HTTP reverse proxying and adaptive WebSocket scheduling are configured only when needed. The
+`rws-ws-load` and `rws-bench` binaries are development tools, not additional servers.
 
-- **`rws-core`** — shared server library; it is linked into the binaries and is not installed separately.
-- **`rws-simple`** — recommended lightweight server for the standard installation.
-- **`rws-comfy`** — extended server with additional configuration, reverse proxy support and optional adaptive tuning.
-- **`rws-ws-load`** — WebSocket load-testing tool for development and performance testing; it is not installed as a systemd service.
+The locked workspace requires Rust 1.88 or newer and Linux 5.6 or newer for contained static-file
+opening. The commands below install a system service. For a non-root local test, use the
+[README quickstart](README.md#local-quickstart). Review [security limitations](docs/SECURITY_TESTING.md)
+before exposing a service.
 
-Install either `rws-simple` or `rws-comfy` as the active server. Their default configurations use the same ports, so do not run both simultaneously unless you change those ports.
-
-The locked workspace requires Rust 1.88 or newer; static-file containment requires Linux 5.6 or
-newer. These instructions install a system service; for a non-root local test use the README
-quickstart. Review [security limitations](docs/SECURITY_TESTING.md) before exposing a service.
-
-> **Naming change:** current packages, binaries, services, configuration directories, metrics and
-> the WebSocket endpoint use the `rws` prefix. Existing pre-rename installations are not migrated
-> automatically. Stop the previous service and carry over only reviewed configuration before
-> enabling a current `rws-*` service on the same ports.
-
-## Simple (recommended default)
+## Fresh installation
 
 ```bash
 sudo apt update
@@ -29,60 +20,57 @@ rustup toolchain install stable
 cd '/path/to/Rust WebServer'
 chmod +x scripts/*.sh
 cargo fmt --check
-cargo test --workspace
-./scripts/build-linux.sh simple
-sudo ./scripts/install-simple.sh
-sudoedit /etc/rws-simple/config.toml
-sudo /usr/local/bin/rws-simple --config /etc/rws-simple/config.toml --check
-sudo systemctl enable --now rws-simple
+cargo test --locked --workspace
+./scripts/build-linux.sh
+sudo ./scripts/install.sh
+sudoedit /etc/rws/config.toml
+sudo /usr/local/bin/rws --config /etc/rws/config.toml --check
+sudo systemctl enable --now rws
 curl -i -H 'Host: example.test' http://127.0.0.1:8080/
 ```
 
-The installer leaves the service stopped and preserves an existing config. `--check` does not
-verify runtime access as user `rws`, port availability, PHP-FPM connectivity or certificate trust;
-inspect `systemctl status` and the journal after starting. The default example enables PHP-FPM;
-if it is not needed, set `php = false` in the site configuration.
+The installer leaves the service stopped, preserves an existing `/etc/rws/config.toml`, and backs
+up existing `rws` binary, unit and logrotate files. It refuses to run while `rws-simple` or
+`rws-comfy` is active. The example enables PHP-FPM; set `php = false` when it is not needed.
+`--check` does not verify runtime access as user `rws`, port availability, PHP-FPM connectivity or
+certificate trust. Inspect `systemctl status rws` and the journal after starting.
 
-## Comfy
+## Migrating from Simple or Comfy
 
-Stop Simple before enabling Comfy when both configurations use the default ports:
+The unified build does **not** automatically modify or remove an older installation. Its binary,
+unit, config and logs use `/usr/local/bin/rws`, `rws.service`, `/etc/rws/` and `/var/log/rws/`;
+the previous variants use separate paths. The default ports overlap. Plan the migration and
+rollback during an appropriate maintenance window, with verified backups of binaries, units,
+configuration, TLS keys, logrotate settings and site data.
 
-```bash
-cd '/path/to/Rust WebServer'
-./scripts/build-linux.sh comfy
-sudo ./scripts/install-comfy.sh
-sudoedit /etc/rws-comfy/config.toml
-sudo /usr/local/bin/rws-comfy --config /etc/rws-comfy/config.toml --check
-sudo systemctl disable --now rws-simple 2>/dev/null || true
-sudo systemctl enable --now rws-comfy
-```
+1. Choose the existing service to migrate (`rws-simple` or `rws-comfy`). Record its service state,
+   paths and configuration. If both are in use, plan each site and port explicitly; the installer
+   will not stop either service for you.
+2. Build the unified binary, stop the legacy service, and run `sudo ./scripts/install.sh`. The
+   installer will still refuse installation if the other legacy service is active.
+3. Copy or merge the old configuration into `/etc/rws/config.toml`, then review it. In particular,
+   update per-site log paths to `/var/log/rws/` or ensure their existing paths remain accessible,
+   and verify TLS key paths and permissions. Proxy and adaptive settings from Comfy remain
+   supported. Simple's static configuration is also accepted.
+4. Run `sudo /usr/local/bin/rws --config /etc/rws/config.toml --check`, start the new service with
+   `sudo systemctl start rws`, and verify HTTP, HTTPS, PHP-FPM, WebSockets, proxying and logs as
+   applicable. `--check` alone does not prove runtime success.
+5. Once the new service is confirmed, disable the legacy service and enable `rws` at boot. Preserve
+   the old installation and backups until rollback is no longer needed.
+
+To roll back, stop and disable `rws`, restore any separately changed configuration and site data,
+then enable and start the original service. Verify its status, routing, TLS, PHP and logs. Do not
+remove the legacy unit or binary until a tested rollback is no longer required.
 
 ## Operations
 
 ```bash
-sudo systemctl status rws-simple
-sudo journalctl -u rws-simple -f
+sudo systemctl status rws
+sudo journalctl -u rws -f
 curl -s http://127.0.0.1:9091/metrics
-sudo systemctl restart rws-simple
-sudo systemctl stop rws-simple
+sudo systemctl restart rws
+sudo systemctl stop rws
 ```
 
-Replace `rws-simple` with `rws-comfy` when operating the Comfy installation.
-
-## WebSocket load test
-
-Build and run the test tool from the project directory:
-
-```bash
-cargo run -p rws-ws-load -- \
-  --url ws://example.test:8080/_rws/ws \
-  --connections 1000 \
-  --messages 10 \
-  --payload-bytes 128 \
-  --idle-seconds 5
-```
-
-Tests above 10,000 connections require `--allow-large-test`. Prepare file-descriptor, memory, port-range and load-generator capacity before running large tests.
-
-See `README.md` for TLS, PHP-FPM, WebSockets, measurement, rollback and limitations.
-
+See [README.md](README.md) for TLS, configuration, PHP-FPM, WebSockets, benchmarks, upgrade
+backups and the separate development tools.

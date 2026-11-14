@@ -1410,8 +1410,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "rws"
+version = "0.1.0-beta.3"
+dependencies = [
+ "anyhow",
+ "rws-core",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "rws-bench"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1429,18 +1439,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rws-comfy"
-version = "0.1.0-beta.2"
-dependencies = [
- "anyhow",
- "rws-core",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "rws-core"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1469,17 +1469,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rws-simple"
-version = "0.1.0-beta.2"
-dependencies = [
- "anyhow",
- "rws-core",
- "tokio",
-]
-
-[[package]]
 name = "rws-ws-load"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 dependencies = [
  "anyhow",
  "futures-util",

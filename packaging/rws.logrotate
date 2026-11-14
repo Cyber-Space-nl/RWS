@@ -1,4 +1,4 @@
-/var/log/rws-simple/*.log {
+/var/log/rws/*.log {
     daily
     rotate 14
     compress

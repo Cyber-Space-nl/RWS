@@ -7,9 +7,9 @@ output_dir="${RWS_BENCH_SMOKE_OUTPUT_DIR:-/tmp}"
 cd "$workspace"
 
 export CARGO_TARGET_DIR="$target_dir"
-cargo build -p rws-simple -p rws-bench
+cargo build -p rws -p rws-bench
 
-"$target_dir/debug/rws-simple" --config config.dev.wsl.toml >"$output_dir/rws-smoke-server.log" 2>&1 &
+"$target_dir/debug/rws" --config config.dev.wsl.toml >"$output_dir/rws-smoke-server.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
 

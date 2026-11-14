@@ -12,6 +12,6 @@ source_ips = []
 allow_large_test = false
 # Optional read-only monitoring; set these for your own server.
 # monitor_ssh = "user@server"
-# monitor_process = "rws-comfy"
+# monitor_process = "rws"
 # monitor_port = 80
 monitor_interval_ms = 1000
