@@ -13,7 +13,7 @@ or Apache.
 reverse proxying and adaptive WebSocket scheduling. Configure the features you need in one
 configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
 
-The [v0.1.0-beta.4 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.4)
+The [v0.1.0-beta.5 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.5)
 provides experimental Linux x86-64 binaries and release notes. Visit
 [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
@@ -81,6 +81,9 @@ See [Configuration](#configuration) for the size limits and other details.
 - Linux is the deployment target; Ubuntu 24.04 on WSL2 and Linux GitHub Actions runners have been
   used for builds and tests. Linux 5.6 or newer is required for contained static-file opening.
   Windows workspace tests are useful for development but Windows deployment is not established.
+- The beta.5 Linux x86-64 archive is built against the Ubuntu 22.04 glibc baseline. The older
+  beta.4 server binary does not start on Ubuntu 22.04 because it requires GLIBC 2.38. Systemd and
+  PHP-FPM installation on Ubuntu 22.04 has not been tested.
 - The workflow in this tree checks the locked workspace with Rust 1.88 and runs the main checks on stable Rust.
   A new dependency resolution may require a newer toolchain; use the committed lockfile.
 
@@ -281,7 +284,7 @@ Static GET supports single and multipart byte ranges. Multipart requests are lim
 Range. Buffered identity and gzip representations have distinct strong SHA-256 ETags and support
 `If-Match` and `If-None-Match`. A matching strong identity ETag or a matching `Last-Modified` date
 at least 60 seconds old is honored in `If-Range`; unsupported values receive the full response.
-On `main`, streamed files on Linux use weak ETags based on device, inode, size, modification time
+Streamed files on Linux use weak ETags based on device, inode, size, modification time
 and change time. They support `If-None-Match` but cannot satisfy `If-Match` or ETag-based
 `If-Range`. Their reliability depends on the filesystem updating those metadata values; unusual
 or remote filesystems may not provide reliable change detection. Streamed responses on non-Linux

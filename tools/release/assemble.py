@@ -13,9 +13,10 @@ import subprocess
 import tarfile
 import tempfile
 
-VERSION = '0.1.0-beta.4'
+VERSION = '0.1.0-beta.5'
 TARGET = 'x86_64-unknown-linux-gnu'
 BINARIES = ('rws', 'rws-ws-load', 'rws-bench')
+MAX_GLIBC = (2, 35)
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -33,6 +34,18 @@ def sha(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             h.update(chunk)
     return h.hexdigest()
+
+
+def check_glibc_symbols(binary):
+    """Reject releases requiring a newer glibc than the Ubuntu 22.04 baseline."""
+    symbols = output(['objdump', '-T', str(binary)])
+    versions = {tuple(map(int, match)) for match in re.findall(r'\bGLIBC_(\d+)\.(\d+)\b', symbols)}
+    if not versions or 'GLIBC_PRIVATE' in symbols:
+        raise RuntimeError(f'cannot establish public glibc symbol requirements for {binary.name}')
+    highest = max(versions)
+    if highest > MAX_GLIBC:
+        raise RuntimeError(f'{binary.name} requires GLIBC {highest[0]}.{highest[1]}, newer than 2.35')
+    print(f'{binary.name}: highest observed GLIBC symbol {highest[0]}.{highest[1]}', flush=True)
 
 
 def main():
@@ -83,6 +96,7 @@ def main():
             version = output([str(source_binary), '--version'])
             if version != f'{binary} {VERSION}':
                 raise RuntimeError(f'unexpected {binary} version: {version}')
+            check_glibc_symbols(source_binary)
             shutil.copy2(source_binary, bundle / 'bin' / binary)
         for path in ('LICENSE', 'README.md', 'rws-icon.png', 'UBUNTU_INSTALL.md', 'CHANGELOG.md', 'SECURITY.md',
                      'CONTRIBUTING.md', 'Cargo.lock', 'config.example.toml',

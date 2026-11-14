@@ -2,11 +2,16 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
-## Unreleased
+## 0.1.0-beta.5 — 2026-11-14
 
 ### Added
 
 - Weak, metadata-based ETags for streamed static files on Linux, with conditional GET and HEAD.
+
+### Changed
+
+- Linux x86-64 release builds target an Ubuntu 22.04 glibc baseline and reject binaries that
+  require newer glibc symbols.
 
 ## 0.1.0-beta.4 — 2026-11-14
 
