@@ -1,5 +1,6 @@
 use crate::{config::StaticCacheConfig, metrics::Metrics};
 use axum::{body::Bytes, http::HeaderValue};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, hash_map::RandomState},
     hash::BuildHasher,
@@ -51,11 +52,14 @@ pub(crate) struct CachedAsset {
     pub content_type: HeaderValue,
     pub content_length: HeaderValue,
     pub modified: Option<SystemTime>,
+    pub etag: HeaderValue,
 }
 
 impl CachedAsset {
     fn new(path: &Path, body: Bytes, modified: Option<SystemTime>) -> Self {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
+        let etag =
+            HeaderValue::from_str(&format!("\"{:x}\"", Sha256::digest(&body))).expect("hex digest");
         Self {
             content_type: HeaderValue::from_str(mime.as_ref())
                 .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
@@ -63,6 +67,7 @@ impl CachedAsset {
                 .expect("numeric content length"),
             body,
             modified,
+            etag,
         }
     }
 }

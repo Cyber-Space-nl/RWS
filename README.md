@@ -125,7 +125,7 @@ memory leaks.
 - HTTP/1.1 on Tokio/Axum.
 - Optional HTTPS using rustls and PEM certificate/key files.
 - Strict Host-based virtual hosts; unknown hosts receive `421`.
-- Static files with MIME detection, GET/HEAD, single byte ranges, date-based conditional requests
+- Static files with MIME detection, GET/HEAD, bounded byte ranges, conditional requests
   and traversal protection; optional gzip and Linux directory listings.
 - A configurable, process-wide static-file cache with bounded bytes and entries, LRU eviction,
   safe interval-based revalidation and Prometheus hit/miss/bypass/eviction metrics.
@@ -150,9 +150,8 @@ memory leaks.
 ## Explicit MVP limitations
 
 - One TLS certificate/key pair per process; per-SNI certificates are not implemented yet.
-- Static multi-range responses, entity-tag generation and strong validators are not implemented.
-  If-Range requests receive a complete representation. The in-memory cache does not add
-  browser/CDN cache-control headers.
+- Strong ETags are provided for buffered identity and gzip representations, not streamed files.
+  The in-memory cache does not add browser/CDN cache-control headers.
 - Site roots and their parent directories must not be writable by untrusted users. PHP-FPM opens
   scripts separately from RWS, and non-Linux builds do not have race-resistant contained opens.
 - Linux static-file containment uses `openat2` (Linux 5.6 or newer); requests fail closed if it is unavailable.
@@ -274,10 +273,14 @@ Start with:
 
 - `config.example.toml`
 
-Static sites support a single byte range for GET and `Last-Modified` / `If-Modified-Since`
-conditional requests. Multiple ranges and `If-Range` are ignored and receive the full response;
-HEAD ignores Range. Date validators follow the existing cache revalidation interval, so a cached
-file can remain visible until revalidated. No ETag is currently generated.
+On `main`, static GET supports single and multipart byte ranges. Multipart requests are limited to
+16 ranges and 1 MiB of selected data; larger requests receive the full response. HEAD ignores
+Range. Buffered identity and gzip representations have distinct strong SHA-256 ETags and support
+`If-Match` and `If-None-Match`. A matching strong identity ETag or a matching `Last-Modified` date
+at least 60 seconds old is honored in `If-Range`; unsupported values receive the full response.
+Streamed files do not emit ETags. Date preconditions also apply. Cached content and validators
+follow the cache revalidation interval.
+These additions postdate the beta.3 release.
 
 The following per-site options are **off by default**:
 

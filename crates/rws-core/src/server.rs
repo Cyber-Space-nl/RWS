@@ -437,6 +437,7 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
             return encoding_not_acceptable();
         }
         let body = asset.body.clone();
+        let modified = asset.modified;
         let response = cached_response(asset, &request, encoding.gzip);
         return encode_static_response(
             response,
@@ -444,6 +445,8 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
             encoding,
             is_head,
             Arc::clone(&state.compression_permits),
+            request.headers(),
+            modified,
         )
         .await;
     }
@@ -506,8 +509,9 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     if encoding.unacceptable {
         return encoding_not_acceptable();
     }
-    if let Some(mut response) =
-        static_precondition_response(request.headers(), target.metadata.modified().ok())
+    if state.static_cache.should_stream(target.metadata.len())
+        && let Some(mut response) =
+            static_precondition_response(request.headers(), target.metadata.modified().ok(), None)
     {
         if encoding.varies {
             response
@@ -516,7 +520,10 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
         }
         return response;
     }
-    let (body, length) = if is_head && !encoding.gzip {
+    let (body, length) = if is_head
+        && !encoding.gzip
+        && state.static_cache.should_stream(target.metadata.len())
+    {
         state
             .static_cache
             .validate_metadata(site.id, &request_path, &target.metadata);
@@ -524,7 +531,12 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     } else {
         if state.static_cache.should_stream(target.metadata.len()) {
             state.static_cache.record_bypass();
-            let range = requested_range(&request, target.metadata.len());
+            let range = requested_range(
+                &request,
+                target.metadata.len(),
+                None,
+                target.metadata.modified().ok(),
+            );
             return match streamed_file_response(target.file, &target.path, &target.metadata, range)
                 .await
             {
@@ -545,6 +557,7 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
         {
             Ok(asset) => {
                 let body = asset.body.clone();
+                let modified = asset.modified;
                 let response = cached_response(asset, &request, encoding.gzip);
                 return encode_static_response(
                     response,
@@ -552,6 +565,8 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
                     encoding,
                     is_head,
                     Arc::clone(&state.compression_permits),
+                    request.headers(),
+                    modified,
                 )
                 .await;
             }
@@ -594,6 +609,23 @@ async fn streamed_file_response(
     if matches!(range, ByteRange::Unsatisfiable) {
         return Ok(range_not_satisfiable(full_length, modified));
     }
+    if let ByteRange::Multiple(ranges) = &range {
+        let mut parts = Vec::with_capacity(ranges.len());
+        for &(start, end) in ranges {
+            file.seek(std::io::SeekFrom::Start(start)).await?;
+            let mut bytes = vec![0; (end - start + 1) as usize];
+            file.read_exact(&mut bytes).await?;
+            parts.push(Bytes::from(bytes));
+        }
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return Ok(multipart_response(
+            ranges,
+            &parts,
+            mime.as_ref(),
+            full_length,
+            modified,
+        ));
+    }
     let (length, partial) = match range {
         ByteRange::Selected(start, end) => {
             file.seek(std::io::SeekFrom::Start(start)).await?;
@@ -624,17 +656,45 @@ async fn streamed_file_response(
 }
 
 fn cached_response(asset: CachedAsset, request: &Request, ignore_range: bool) -> Response {
-    if let Some(response) = static_precondition_response(request.headers(), asset.modified) {
+    let etag = (!ignore_range).then_some(&asset.etag);
+    if !ignore_range
+        && let Some(response) =
+            static_precondition_response(request.headers(), asset.modified, etag)
+    {
         return response;
     }
     let full_length = asset.body.len() as u64;
     let range = if ignore_range {
         ByteRange::Ignore
     } else {
-        requested_range(request, full_length)
+        requested_range(request, full_length, etag, asset.modified)
     };
     if matches!(range, ByteRange::Unsatisfiable) {
-        return range_not_satisfiable(full_length, asset.modified);
+        let mut response = range_not_satisfiable(full_length, asset.modified);
+        if let Some(tag) = etag {
+            response.headers_mut().insert(header::ETAG, tag.clone());
+        }
+        return response;
+    }
+    if let ByteRange::Multiple(ranges) = &range {
+        let parts: Vec<_> = ranges
+            .iter()
+            .map(|&(start, end)| asset.body.slice(start as usize..=end as usize))
+            .collect();
+        let mut response = multipart_response(
+            ranges,
+            &parts,
+            asset
+                .content_type
+                .to_str()
+                .unwrap_or("application/octet-stream"),
+            full_length,
+            asset.modified,
+        );
+        if let Some(tag) = etag {
+            response.headers_mut().insert(header::ETAG, tag.clone());
+        }
+        return response;
     }
     let is_head = request.method() == Method::HEAD;
     let (body, partial) = match range {
@@ -660,6 +720,9 @@ fn cached_response(asset: CachedAsset, request: &Request, ignore_range: bool) ->
         HeaderValue::from_static("nosniff"),
     );
     add_static_headers(&mut response, asset.modified);
+    if let Some(tag) = etag {
+        response.headers_mut().insert(header::ETAG, tag.clone());
+    }
     if let Some((start, end)) = partial {
         response.headers_mut().insert(
             header::CONTENT_LENGTH,
@@ -763,6 +826,8 @@ async fn encode_static_response(
     encoding: StaticEncoding,
     is_head: bool,
     permits: Arc<Semaphore>,
+    request_headers: &HeaderMap,
+    modified: Option<SystemTime>,
 ) -> Response {
     if encoding.varies {
         response
@@ -786,6 +851,18 @@ async fn encode_static_response(
     let Ok(Ok(compressed)) = compressed else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
+    use sha2::{Digest, Sha256};
+    let etag = HeaderValue::from_str(&format!("\"{:x}\"", Sha256::digest(&compressed)))
+        .expect("hex digest");
+    if let Some(mut precondition) =
+        static_precondition_response(request_headers, modified, Some(&etag))
+    {
+        precondition
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        return precondition;
+    }
+    response.headers_mut().insert(header::ETAG, etag);
     response
         .headers_mut()
         .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
@@ -806,18 +883,42 @@ enum ByteRange {
     Ignore,
     Unsatisfiable,
     Selected(u64, u64),
+    Multiple(Vec<(u64, u64)>),
 }
 
-// Multiple ranges and If-Range are deliberately ignored until multipart ranges and strong
-// validators are supported. This avoids serving incorrect partial representations.
-fn requested_range(request: &Request, length: u64) -> ByteRange {
-    fn decimal(value: &str) -> Option<u64> {
-        (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
-            .then(|| value.parse().ok())
-            .flatten()
-    }
-    if request.method() != Method::GET || request.headers().contains_key(header::IF_RANGE) {
+// Bound multipart buffering and reject excessive range counts by ignoring the Range header.
+fn requested_range(
+    request: &Request,
+    length: u64,
+    etag: Option<&HeaderValue>,
+    modified: Option<SystemTime>,
+) -> ByteRange {
+    if request.method() != Method::GET {
         return ByteRange::Ignore;
+    }
+    if request.headers().contains_key(header::IF_RANGE) {
+        let mut values = request.headers().get_all(header::IF_RANGE).iter();
+        let valid = match (values.next(), values.next()) {
+            (Some(value), None) => {
+                etag.is_some_and(|tag| value == tag)
+                    || value
+                        .to_str()
+                        .ok()
+                        .and_then(|value| httpdate::parse_http_date(value).ok())
+                        .zip(modified)
+                        .is_some_and(|(date, modified)| {
+                            date_at_or_before(modified, date)
+                                && date_at_or_before(date, modified)
+                                && SystemTime::now()
+                                    .duration_since(modified)
+                                    .is_ok_and(|age| age >= Duration::from_secs(60))
+                        })
+            }
+            _ => false,
+        };
+        if !valid {
+            return ByteRange::Ignore;
+        }
     }
     let mut headers = request.headers().get_all(header::RANGE).iter();
     let Some(value) = headers.next().and_then(|value| value.to_str().ok()) else {
@@ -829,8 +930,42 @@ fn requested_range(request: &Request, length: u64) -> ByteRange {
     let Some((unit, spec)) = value.split_once('=') else {
         return ByteRange::Ignore;
     };
-    if !unit.trim().eq_ignore_ascii_case("bytes") || spec.contains(',') {
+    if !unit.trim().eq_ignore_ascii_case("bytes") {
         return ByteRange::Ignore;
+    }
+    let parts: Vec<_> = spec.split(',').collect();
+    if parts.len() > 16 || parts.iter().any(|part| part.trim().is_empty()) {
+        return ByteRange::Ignore;
+    }
+    let mut ranges = Vec::new();
+    for part in parts {
+        match parse_byte_range(part.trim(), length) {
+            ByteRange::Selected(start, end) => ranges.push((start, end)),
+            ByteRange::Unsatisfiable => {}
+            _ => return ByteRange::Ignore,
+        }
+    }
+    if ranges.is_empty() {
+        return ByteRange::Unsatisfiable;
+    }
+    if ranges.len() == 1 {
+        return ByteRange::Selected(ranges[0].0, ranges[0].1);
+    }
+    if ranges
+        .iter()
+        .try_fold(0_u64, |sum, (start, end)| sum.checked_add(end - start + 1))
+        .is_none_or(|size| size > 1024 * 1024)
+    {
+        return ByteRange::Ignore;
+    }
+    ByteRange::Multiple(ranges)
+}
+
+fn parse_byte_range(spec: &str, length: u64) -> ByteRange {
+    fn decimal(value: &str) -> Option<u64> {
+        (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| value.parse().ok())
+            .flatten()
     }
     let Some((start, end)) = spec.trim().split_once('-') else {
         return ByteRange::Ignore;
@@ -892,17 +1027,20 @@ fn date_at_or_before(modified: SystemTime, date: SystemTime) -> bool {
 fn static_precondition_response(
     headers: &HeaderMap,
     modified: Option<SystemTime>,
+    etag: Option<&HeaderValue>,
 ) -> Option<Response> {
     let modified = modified.filter(|time| *time <= SystemTime::now());
-    // No ETag is emitted. A wildcard can match existence; all other If-Match tags fail.
     if headers.contains_key(header::IF_MATCH) {
         let matches = headers
             .get_all(header::IF_MATCH)
             .iter()
-            .any(|value| value.as_bytes().trim_ascii() == b"*");
+            .any(|value| entity_tag_matches(value, etag, false));
         if !matches {
             let mut response = StatusCode::PRECONDITION_FAILED.into_response();
             add_static_headers(&mut response, modified);
+            if let Some(tag) = etag {
+                response.headers_mut().insert(header::ETAG, tag.clone());
+            }
             return Some(response);
         }
     } else if let (Some(modified), Some(date)) = (
@@ -915,13 +1053,16 @@ fn static_precondition_response(
     {
         let mut response = StatusCode::PRECONDITION_FAILED.into_response();
         add_static_headers(&mut response, Some(modified));
+        if let Some(tag) = etag {
+            response.headers_mut().insert(header::ETAG, tag.clone());
+        }
         return Some(response);
     }
     let unchanged = if headers.contains_key(header::IF_NONE_MATCH) {
         headers
             .get_all(header::IF_NONE_MATCH)
             .iter()
-            .any(|value| value.as_bytes().trim_ascii() == b"*")
+            .any(|value| entity_tag_matches(value, etag, true))
     } else {
         modified
             .zip(
@@ -935,10 +1076,45 @@ fn static_precondition_response(
     if unchanged {
         let mut response = StatusCode::NOT_MODIFIED.into_response();
         add_static_headers(&mut response, modified);
+        if let Some(tag) = etag {
+            response.headers_mut().insert(header::ETAG, tag.clone());
+        }
         Some(response)
     } else {
         None
     }
+}
+
+fn entity_tag_matches(value: &HeaderValue, etag: Option<&HeaderValue>, weak: bool) -> bool {
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    if value.trim() == "*" {
+        return true;
+    }
+    let Some(tag) = etag.and_then(|tag| tag.to_str().ok()) else {
+        return false;
+    };
+    // Quoted opaque tags may contain commas; split only outside quotes.
+    let mut quoted = false;
+    let mut start = 0;
+    for (index, byte) in value
+        .bytes()
+        .enumerate()
+        .chain(std::iter::once((value.len(), b',')))
+    {
+        if byte == b'"' {
+            quoted = !quoted;
+        }
+        if byte == b',' && !quoted {
+            let item = value[start..index].trim();
+            if item == tag || (weak && item.strip_prefix("W/") == Some(tag)) {
+                return true;
+            }
+            start = index + 1;
+        }
+    }
+    false
 }
 
 fn set_content_range(response: &mut Response, start: u64, end: u64, length: u64) {
@@ -947,6 +1123,59 @@ fn set_content_range(response: &mut Response, start: u64, end: u64, length: u64)
         header::CONTENT_RANGE,
         HeaderValue::from_str(&format!("bytes {start}-{end}/{length}")).expect("numeric range"),
     );
+}
+
+fn multipart_response(
+    ranges: &[(u64, u64)],
+    parts: &[Bytes],
+    mime: &str,
+    length: u64,
+    modified: Option<SystemTime>,
+) -> Response {
+    // Ensure the chosen delimiter does not appear in any selected bytes.
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update(part);
+    }
+    let digest = format!("{:x}", hash.finalize());
+    let mut n = 0_u64;
+    let boundary = loop {
+        let candidate = format!("rws-{}-{n:x}", &digest[..32]);
+        if parts.iter().all(|part| {
+            !part
+                .windows(candidate.len())
+                .any(|window| window == candidate.as_bytes())
+        }) {
+            break candidate;
+        }
+        n += 1;
+    };
+    let mut body = Vec::new();
+    for ((start, end), part) in ranges.iter().zip(parts) {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Type: {mime}\r\nContent-Range: bytes {start}-{end}/{length}\r\n\r\n").as_bytes());
+        body.extend_from_slice(part);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    let body_length = body.len();
+    let mut response = Response::new(Body::from(body));
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&format!("multipart/byteranges; boundary={boundary}"))
+            .expect("valid boundary"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&body_length.to_string()).expect("numeric length"),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    add_static_headers(&mut response, modified);
+    response
 }
 
 fn range_not_satisfiable(length: u64, modified: Option<SystemTime>) -> Response {
@@ -1912,6 +2141,72 @@ mod tests {
     }
 
     #[test]
+    fn multipart_ranges_are_bounded() {
+        let request = Request::builder()
+            .header("range", "bytes=0-1048575,1048576-1048576")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            requested_range(&request, 2_000_000, None, None),
+            ByteRange::Ignore
+        );
+        let request = Request::builder()
+            .header("range", "bytes=0-2,broken")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(requested_range(&request, 10, None, None), ByteRange::Ignore);
+    }
+
+    #[test]
+    fn if_range_date_requires_an_old_and_exact_last_modified() {
+        let modified = SystemTime::now() - Duration::from_secs(120);
+        let date = httpdate::fmt_http_date(modified);
+        let request = Request::builder()
+            .header("range", "bytes=0-1")
+            .header("if-range", &date)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            requested_range(&request, 10, None, Some(modified)),
+            ByteRange::Selected(0, 1)
+        );
+        assert_eq!(
+            requested_range(&request, 10, None, Some(modified + Duration::from_secs(1))),
+            ByteRange::Ignore
+        );
+        let recent = SystemTime::now() - Duration::from_secs(5);
+        let request = Request::builder()
+            .header("range", "bytes=0-1")
+            .header("if-range", httpdate::fmt_http_date(recent))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            requested_range(&request, 10, None, Some(recent)),
+            ByteRange::Ignore
+        );
+    }
+
+    #[test]
+    fn entity_tags_respect_weak_comparison_and_quoted_commas() {
+        let tag = HeaderValue::from_static("\"abc\"");
+        assert!(entity_tag_matches(
+            &HeaderValue::from_static("\"a,b\", W/\"abc\""),
+            Some(&tag),
+            true
+        ));
+        assert!(!entity_tag_matches(
+            &HeaderValue::from_static("\"a,b\", W/\"abc\""),
+            Some(&tag),
+            false
+        ));
+        assert!(!entity_tag_matches(
+            &HeaderValue::from_static("\"a, \"abc\""),
+            Some(&tag),
+            true
+        ));
+    }
+
+    #[test]
     fn static_headers_omit_dates_outside_http_date_range() {
         let mut response = StatusCode::OK.into_response();
         add_static_headers(&mut response, Some(UNIX_EPOCH - Duration::from_secs(1)));
@@ -2008,11 +2303,33 @@ mod tests {
             assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */10");
             let response =
                 static_or_php(&state, site, get(Method::GET, "range", "bytes=0-1,3-4")).await;
-            assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(
-                to_bytes(response.into_body(), 32).await.unwrap(),
-                "abcdefghij"
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            let content_type = response.headers()[header::CONTENT_TYPE].to_str().unwrap();
+            let boundary = content_type
+                .strip_prefix("multipart/byteranges; boundary=")
+                .unwrap()
+                .to_owned();
+            let expected = format!(
+                "--{boundary}\r\nContent-Type: text/plain\r\nContent-Range: bytes 0-1/10\r\n\r\nab\r\n--{boundary}\r\nContent-Type: text/plain\r\nContent-Range: bytes 3-4/10\r\n\r\nde\r\n--{boundary}--\r\n"
             );
+            assert_eq!(
+                response.headers()[header::CONTENT_LENGTH],
+                expected.len().to_string()
+            );
+            assert_eq!(
+                to_bytes(response.into_body(), 1024).await.unwrap(),
+                expected
+            );
+            let response =
+                static_or_php(&state, site, get(Method::GET, "range", "bytes=50-,2-3")).await;
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-3/10");
+            let response =
+                static_or_php(&state, site, get(Method::GET, "range", "bytes=50-,60-")).await;
+            assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+            let too_many = format!("bytes={}", vec!["0-0"; 17].join(","));
+            let response = static_or_php(&state, site, get(Method::GET, "range", &too_many)).await;
+            assert_eq!(response.status(), StatusCode::OK);
             let response =
                 static_or_php(&state, site, get(Method::HEAD, "range", "bytes=0-1")).await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -2100,6 +2417,125 @@ mod tests {
             assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
             assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */0");
         }
+    }
+
+    #[tokio::test]
+    async fn strong_etags_follow_the_selected_buffered_representation() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("asset.txt"), "abcdefghij").unwrap();
+        let config: Config = toml::from_str(&format!("[static_cache]\nenabled=true\nrevalidate_after_ms=0\n[[sites]]\nhost='example.test'\nroot='{}'\ngzip=true\n", directory.path().display())).unwrap();
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let request = |method: Method, headers: &[(&str, &str)]| {
+            let mut builder = Request::builder().method(method).uri("/asset.txt");
+            for &(key, value) in headers {
+                builder = builder.header(key, value);
+            }
+            builder.body(Body::empty()).unwrap()
+        };
+        let response = static_or_php(&state, site, request(Method::HEAD, &[])).await;
+        let tag = response.headers()[header::ETAG]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(tag.starts_with('"') && tag.ends_with('"'));
+        let response = static_or_php(
+            &state,
+            site,
+            request(Method::GET, &[("if-none-match", &format!("W/{tag}"))]),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::ETAG], tag);
+        let response = static_or_php(
+            &state,
+            site,
+            request(Method::GET, &[("if-match", &format!("W/{tag}"))]),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let response = static_or_php(
+            &state,
+            site,
+            request(Method::GET, &[("range", "bytes=2-5"), ("if-range", &tag)]),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(to_bytes(response.into_body(), 16).await.unwrap(), "cdef");
+        let response = static_or_php(
+            &state,
+            site,
+            request(
+                Method::GET,
+                &[("range", "bytes=2-5"), ("if-range", &format!("W/{tag}"))],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = static_or_php(
+            &state,
+            site,
+            request(
+                Method::GET,
+                &[("accept-encoding", "gzip"), ("if-none-match", &tag)],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        let gzip_tag = response.headers()[header::ETAG]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(gzip_tag, tag);
+        let response = static_or_php(
+            &state,
+            site,
+            request(
+                Method::GET,
+                &[("accept-encoding", "gzip"), ("if-none-match", &gzip_tag)],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[header::ETAG], gzip_tag);
+        assert_eq!(response.headers()[header::VARY], "Accept-Encoding");
+        let response = static_or_php(
+            &state,
+            site,
+            request(
+                Method::GET,
+                &[("accept-encoding", "gzip"), ("if-match", &tag)],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let response = static_or_php(
+            &state,
+            site,
+            request(
+                Method::GET,
+                &[("accept-encoding", "gzip"), ("if-match", &gzip_tag)],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = static_or_php(
+            &state,
+            site,
+            request(Method::HEAD, &[("accept-encoding", "gzip")]),
+        )
+        .await;
+        assert_eq!(response.headers()[header::ETAG], gzip_tag);
+        std::fs::write(directory.path().join("asset.txt"), "0123456789").unwrap();
+        let response = static_or_php(
+            &state,
+            site,
+            request(Method::GET, &[("if-none-match", &tag)]),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_ne!(response.headers()[header::ETAG], tag);
     }
 
     #[tokio::test]

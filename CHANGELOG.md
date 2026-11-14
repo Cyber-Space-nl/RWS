@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## Unreleased
+
+### Added
+
+- Bounded multipart byte ranges and SHA-256 strong ETags for buffered identity and gzip
+  representations, including conditional requests and matching ETag- or date-based `If-Range`.
+
 ## 0.1.0-beta.3 — 2026-11-14
 
 ### Changed
