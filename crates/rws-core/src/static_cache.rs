@@ -50,10 +50,11 @@ pub(crate) struct CachedAsset {
     pub body: Bytes,
     pub content_type: HeaderValue,
     pub content_length: HeaderValue,
+    pub modified: Option<SystemTime>,
 }
 
 impl CachedAsset {
-    fn new(path: &Path, body: Bytes) -> Self {
+    fn new(path: &Path, body: Bytes, modified: Option<SystemTime>) -> Self {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         Self {
             content_type: HeaderValue::from_str(mime.as_ref())
@@ -61,6 +62,7 @@ impl CachedAsset {
             content_length: HeaderValue::from_str(&body.len().to_string())
                 .expect("numeric content length"),
             body,
+            modified,
         }
     }
 }
@@ -182,15 +184,15 @@ impl StaticCache {
         metadata: &std::fs::Metadata,
     ) -> std::io::Result<CachedAsset> {
         if !self.config.enabled {
-            return self.bypass(path, &mut file, metadata.len()).await;
+            return self.bypass(path, &mut file, metadata).await;
         }
         let Some(mut fingerprint) = FileFingerprint::from_metadata(metadata) else {
-            return self.bypass(path, &mut file, metadata.len()).await;
+            return self.bypass(path, &mut file, metadata).await;
         };
         let mut counted_miss = false;
         for attempt in 0..2 {
             if !self.cacheable_size(fingerprint.length) {
-                return self.bypass(path, &mut file, metadata.len()).await;
+                return self.bypass(path, &mut file, metadata).await;
             }
             if let Some(asset) = self.lookup_validated(site_id, request_path, fingerprint) {
                 return Ok(asset);
@@ -215,20 +217,20 @@ impl StaticCache {
             let after = file.metadata().await?;
             let after_fingerprint = FileFingerprint::from_metadata(&after);
             if after_fingerprint == Some(fingerprint) && body.len() as u64 == fingerprint.length {
-                let asset = CachedAsset::new(path, body);
+                let asset = CachedAsset::new(path, body, Some(fingerprint.modified));
                 return Ok(self.insert(site_id, request_path.to_owned(), fingerprint, asset));
             }
             if attempt == 1 {
                 self.metrics
                     .static_cache_bypasses_total
                     .fetch_add(1, Ordering::Relaxed);
-                return Ok(CachedAsset::new(path, body));
+                return Ok(CachedAsset::new(path, body, None));
             }
             let Some(after_fingerprint) = after_fingerprint else {
                 self.metrics
                     .static_cache_bypasses_total
                     .fetch_add(1, Ordering::Relaxed);
-                return Ok(CachedAsset::new(path, body));
+                return Ok(CachedAsset::new(path, body, None));
             };
             fingerprint = after_fingerprint;
         }
@@ -281,19 +283,25 @@ impl StaticCache {
         &self,
         path: &Path,
         file: &mut tokio::fs::File,
-        length: u64,
+        metadata: &std::fs::Metadata,
     ) -> std::io::Result<CachedAsset> {
         self.record_bypass();
         let mut data = Vec::new();
         file.rewind().await?;
+        let length = metadata.len();
         file.take(length.saturating_add(1))
             .read_to_end(&mut data)
             .await?;
         if data.len() as u64 > length {
             return Err(std::io::Error::other("file grew during read"));
         }
+        let before = FileFingerprint::from_metadata(metadata);
+        let after = FileFingerprint::from_metadata(&file.metadata().await?);
+        let modified = before
+            .filter(|value| Some(*value) == after && data.len() as u64 == length)
+            .map(|value| value.modified);
         let body = Bytes::from(data);
-        Ok(CachedAsset::new(path, body))
+        Ok(CachedAsset::new(path, body, modified))
     }
 
     fn lookup_validated(
@@ -668,7 +676,7 @@ mod tests {
 
     #[test]
     fn cached_headers_are_prebuilt() {
-        let asset = CachedAsset::new(Path::new("asset.css"), Bytes::from_static(b"abc"));
+        let asset = CachedAsset::new(Path::new("asset.css"), Bytes::from_static(b"abc"), None);
         assert_eq!(asset.content_type, "text/css");
         assert_eq!(asset.content_length, "3");
     }

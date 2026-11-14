@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## Unreleased
+
+### Added
+
+- Static GET single-byte-range responses and date-based conditional requests.
+- Opt-in bounded gzip for eligible static files and opt-in, contained Linux directory listings.
+
 ## 0.1.0-beta.1 — 2026-11-13
 
 ### Added

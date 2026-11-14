@@ -84,7 +84,8 @@ memory leaks.
 - HTTP/1.1 on Tokio/Axum.
 - Optional HTTPS using rustls and PEM certificate/key files.
 - Strict Host-based virtual hosts; unknown hosts receive `421`.
-- Static files with MIME detection, GET/HEAD and traversal protection.
+- Static files with MIME detection, GET/HEAD, single byte ranges, date-based conditional requests
+  and traversal protection; optional gzip and Linux directory listings.
 - A configurable, process-wide static-file cache with bounded bytes and entries, LRU eviction,
   safe interval-based revalidation and Prometheus hit/miss/bypass/eviction metrics.
 - A lock-sharded static hot path: fresh hits avoid filesystem access, path canonicalization and
@@ -108,8 +109,9 @@ memory leaks.
 ## Explicit MVP limitations
 
 - One TLS certificate/key pair per process; per-SNI certificates are not implemented yet.
-- Static range requests, conditional requests, response compression and directory listings are
-  not implemented. The in-memory cache does not add browser/CDN cache-control headers.
+- Static multi-range responses, entity-tag generation and strong validators are not implemented.
+  If-Range requests receive a complete representation. The in-memory cache does not add
+  browser/CDN cache-control headers.
 - Site roots and their parent directories must not be writable by untrusted users. PHP-FPM opens
   scripts separately from RWS, and non-Linux builds do not have race-resistant contained opens.
 - Linux static-file containment uses `openat2` (Linux 5.6 or newer); requests fail closed if it is unavailable.
@@ -244,6 +246,30 @@ Start with:
 
 - `config.simple.example.toml`
 - `config.comfy.example.toml`
+
+Static sites support a single byte range for GET and `Last-Modified` / `If-Modified-Since`
+conditional requests. Multiple ranges and `If-Range` are ignored and receive the full response;
+HEAD ignores Range. Date validators follow the existing cache revalidation interval, so a cached
+file can remain visible until revalidated. No ETag is currently generated.
+
+The following per-site options are **off by default**:
+
+```toml
+[[sites]]
+host = "files.example.test"
+root = "/var/www/files.example.test/public"
+gzip = true
+directory_listing = true
+```
+
+Gzip applies to eligible text, JSON, JavaScript, XML and SVG static files up to 1 MiB when the
+client accepts it; files must also fit the configured static-cache file and total size limits,
+even when the cache is disabled. Gzip is not applied to PHP or proxy responses. Byte-range
+requests prefer the identity representation. Compression is bounded to at most 16 concurrent jobs. Directory
+listings are Linux-only, use a contained opened directory, omit hidden entries and symlinks, and
+are capped at 1,024 entries, 4,096 examined entries and 256 KiB of names. Enable them only for directories whose visible
+contents may be published. Listings require `/proc/self/fd` to be available. An existing index
+file takes precedence over listing. On non-Linux builds directory listings are unavailable.
 
 Static files can be held in a process-wide, bounded LRU cache. It is disabled when the section
 is omitted, which keeps old configurations compatible and provides a clean benchmark baseline.

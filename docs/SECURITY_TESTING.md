@@ -41,6 +41,12 @@ user unprivileged and limit its write access.
   Restrict write access and isolate the PHP-FPM service. `max_fastcgi_response_bytes` limits
   FastCGI wire bytes per request, including record framing, headers, stderr and response body.
   PHP-FPM memory behaviour needs further end-to-end testing.
+- Directory listings are disabled by default. On Linux an enabled listing enumerates an opened,
+  contained directory, excludes dotfiles and symlinks, and limits examined entries, result count
+  and name bytes.
+  It intentionally reveals other visible names; enable it only for public directories. It depends
+  on `/proc/self/fd` and is unavailable on non-Linux platforms. Static gzip is opt-in and its
+  worker concurrency and input size are bounded; it does not compress PHP or proxy responses.
 - Proxy limits apply per request, not to aggregate process memory. The proxy strips untrusted
   forwarding headers and does not construct replacement client-identity headers. Deployments that
   need trusted proxy chains need explicit support before relying on such headers.

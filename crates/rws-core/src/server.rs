@@ -26,10 +26,10 @@ use std::{
     pin::Pin,
     sync::{Arc, atomic::Ordering},
     task::{Context as TaskContext, Poll},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{Semaphore, watch},
 };
@@ -52,6 +52,7 @@ struct AppState {
     metrics: Arc<Metrics>,
     static_cache: Arc<StaticCache>,
     request_permits: Arc<Semaphore>,
+    compression_permits: Arc<Semaphore>,
     scheduler: SchedulerHandle,
     #[cfg(feature = "comfy")]
     proxy_client: reqwest::Client,
@@ -73,6 +74,7 @@ pub async fn serve(config: Config) -> Result<()> {
         metrics: Arc::clone(&metrics),
         static_cache,
         request_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests)),
+        compression_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(16))),
         scheduler,
         #[cfg(feature = "comfy")]
         proxy_client: reqwest::Client::builder()
@@ -419,7 +421,26 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     if can_use_cache
         && let FastLookup::Hit(asset) = state.static_cache.fast_lookup(site.id, &request_path)
     {
-        return cached_response(asset, is_head);
+        let encoding = static_encoding(
+            request.headers(),
+            site.config.gzip,
+            asset.content_type.to_str().unwrap_or(""),
+            asset.body.len() as u64,
+            false,
+        );
+        if encoding.unacceptable {
+            return encoding_not_acceptable();
+        }
+        let body = asset.body.clone();
+        let response = cached_response(asset, &request, encoding.gzip);
+        return encode_static_response(
+            response,
+            body,
+            encoding,
+            is_head,
+            Arc::clone(&state.compression_permits),
+        )
+        .await;
     }
     let _permit = match state.request_permits.try_acquire() {
         Ok(permit) => permit,
@@ -428,13 +449,25 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
 
     let target = match resolve_target(root, &request_path, &site.config.index).await {
         Ok(target) => target,
-        Err(StatusCode::NOT_FOUND) if site.config.front_controller.is_some() => {
+        Err(StatusCode::NOT_FOUND) => {
+            if site.config.directory_listing
+                && matches!(*request.method(), Method::GET | Method::HEAD)
+            {
+                let raw_path = request.uri().path().to_owned();
+                let query = request.uri().query().map(str::to_owned);
+                match directory_response(root, &request_path, &raw_path, query.as_deref(), is_head)
+                    .await
+                {
+                    Ok(Some(response)) => return response,
+                    Err(status) => return status.into_response(),
+                    Ok(None) => {}
+                }
+            }
+            let Some(front_controller) = site.config.front_controller.as_deref() else {
+                state.static_cache.invalidate(site.id, &request_path);
+                return (StatusCode::NOT_FOUND, "not found").into_response();
+            };
             state.static_cache.invalidate(site.id, &request_path);
-            let front_controller = site
-                .config
-                .front_controller
-                .as_deref()
-                .expect("front controller checked above");
             match resolve_target(root, front_controller, &site.config.index).await {
                 Ok(target) => target,
                 Err(status) => {
@@ -457,7 +490,28 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response();
     }
-    let (body, length) = if is_head {
+    let mime = mime_guess::from_path(&target.path).first_or_octet_stream();
+    let encoding = static_encoding(
+        request.headers(),
+        site.config.gzip,
+        mime.as_ref(),
+        target.metadata.len(),
+        state.static_cache.should_stream(target.metadata.len()),
+    );
+    if encoding.unacceptable {
+        return encoding_not_acceptable();
+    }
+    if let Some(mut response) =
+        static_precondition_response(request.headers(), target.metadata.modified().ok())
+    {
+        if encoding.varies {
+            response
+                .headers_mut()
+                .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        }
+        return response;
+    }
+    let (body, length) = if is_head && !encoding.gzip {
         state
             .static_cache
             .validate_metadata(site.id, &request_path, &target.metadata);
@@ -465,7 +519,8 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     } else {
         if state.static_cache.should_stream(target.metadata.len()) {
             state.static_cache.record_bypass();
-            return match streamed_file_response(target.file, &target.path, target.metadata.len())
+            let range = requested_range(&request, target.metadata.len());
+            return match streamed_file_response(target.file, &target.path, &target.metadata, range)
                 .await
             {
                 Ok(response) => response,
@@ -483,13 +538,23 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
             )
             .await
         {
-            Ok(asset) => return cached_response(asset, false),
+            Ok(asset) => {
+                let body = asset.body.clone();
+                let response = cached_response(asset, &request, encoding.gzip);
+                return encode_static_response(
+                    response,
+                    body,
+                    encoding,
+                    is_head,
+                    Arc::clone(&state.compression_permits),
+                )
+                .await;
+            }
             Err(error) => {
                 return static_read_error(site, &target.path, error);
             }
         }
     };
-    let mime = mime_guess::from_path(&target.path).first_or_octet_stream();
     let mut response = Response::new(body.map_or_else(Body::empty, Body::from));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -504,16 +569,35 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
+    add_static_headers(&mut response, target.metadata.modified().ok());
+    if encoding.varies {
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    }
     response
 }
 
 async fn streamed_file_response(
-    file: tokio::fs::File,
+    mut file: tokio::fs::File,
     path: &Path,
-    length: u64,
+    metadata: &std::fs::Metadata,
+    range: ByteRange,
 ) -> std::io::Result<Response> {
+    let full_length = metadata.len();
+    let modified = metadata.modified().ok();
+    if matches!(range, ByteRange::Unsatisfiable) {
+        return Ok(range_not_satisfiable(full_length, modified));
+    }
+    let (length, partial) = match range {
+        ByteRange::Selected(start, end) => {
+            file.seek(std::io::SeekFrom::Start(start)).await?;
+            (end - start + 1, Some((start, end)))
+        }
+        _ => (full_length, None),
+    };
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    let mut response = Response::new(Body::from_stream(ReaderStream::new(file)));
+    let mut response = Response::new(Body::from_stream(ReaderStream::new(file.take(length))));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_str(mime.as_ref())
@@ -527,14 +611,38 @@ async fn streamed_file_response(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
+    add_static_headers(&mut response, modified);
+    if let Some((start, end)) = partial {
+        set_content_range(&mut response, start, end, full_length);
+    }
     Ok(response)
 }
 
-fn cached_response(asset: CachedAsset, is_head: bool) -> Response {
+fn cached_response(asset: CachedAsset, request: &Request, ignore_range: bool) -> Response {
+    if let Some(response) = static_precondition_response(request.headers(), asset.modified) {
+        return response;
+    }
+    let full_length = asset.body.len() as u64;
+    let range = if ignore_range {
+        ByteRange::Ignore
+    } else {
+        requested_range(request, full_length)
+    };
+    if matches!(range, ByteRange::Unsatisfiable) {
+        return range_not_satisfiable(full_length, asset.modified);
+    }
+    let is_head = request.method() == Method::HEAD;
+    let (body, partial) = match range {
+        ByteRange::Selected(start, end) => (
+            asset.body.slice(start as usize..=end as usize),
+            Some((start, end)),
+        ),
+        _ => (asset.body, None),
+    };
     let mut response = Response::new(if is_head {
         Body::empty()
     } else {
-        Body::from(asset.body)
+        Body::from(body)
     });
     response
         .headers_mut()
@@ -546,7 +654,444 @@ fn cached_response(asset: CachedAsset, is_head: bool) -> Response {
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
+    add_static_headers(&mut response, asset.modified);
+    if let Some((start, end)) = partial {
+        response.headers_mut().insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&(end - start + 1).to_string()).expect("numeric length"),
+        );
+        set_content_range(&mut response, start, end, full_length);
+    }
     response
+}
+
+#[derive(Clone, Copy)]
+struct StaticEncoding {
+    varies: bool,
+    gzip: bool,
+    unacceptable: bool,
+}
+
+fn encoding_not_acceptable() -> Response {
+    let mut response = StatusCode::NOT_ACCEPTABLE.into_response();
+    response
+        .headers_mut()
+        .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    response
+}
+
+fn static_encoding(
+    headers: &HeaderMap,
+    enabled: bool,
+    mime: &str,
+    length: u64,
+    streaming: bool,
+) -> StaticEncoding {
+    if !enabled {
+        return StaticEncoding {
+            varies: false,
+            gzip: false,
+            unacceptable: false,
+        };
+    }
+    let compressible = mime.starts_with("text/")
+        || matches!(
+            mime,
+            "application/javascript" | "application/json" | "application/xml" | "image/svg+xml"
+        );
+    let varies = compressible && !streaming && length <= 1024 * 1024;
+    let mut gzip_quality = None;
+    let mut identity_quality = None;
+    let mut wildcard_quality = None;
+    for value in headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+    {
+        for item in value.split(',') {
+            let mut parts = item.trim().split(';');
+            let name = parts.next().unwrap_or_default().trim();
+            let mut quality = 1.0_f32;
+            for parameter in parts {
+                if let Some((key, value)) = parameter.trim().split_once('=')
+                    && key.trim().eq_ignore_ascii_case("q")
+                {
+                    quality = value
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|q| (0.0..=1.0).contains(q))
+                        .unwrap_or(0.0);
+                }
+            }
+            if name.eq_ignore_ascii_case("gzip") {
+                gzip_quality = Some(quality);
+            } else if name.eq_ignore_ascii_case("identity") {
+                identity_quality = Some(quality);
+            } else if name == "*" {
+                wildcard_quality = Some(quality);
+            }
+        }
+    }
+    let identity = identity_quality.unwrap_or(if wildcard_quality == Some(0.0) {
+        0.0
+    } else {
+        1.0
+    }) > 0.0;
+    let gzip_weight = gzip_quality.or(wildcard_quality).unwrap_or(0.0);
+    let gzip = varies
+        && gzip_weight > 0.0
+        && identity_quality.is_none_or(|identity_weight| gzip_weight >= identity_weight);
+    // Prefer identity for byte-range requests. If identity was explicitly forbidden, gzip the
+    // complete representation instead of applying a byte range to the wrong representation.
+    let gzip = gzip && (!headers.contains_key(header::RANGE) || !identity);
+    StaticEncoding {
+        varies,
+        gzip,
+        unacceptable: !identity && !gzip,
+    }
+}
+
+async fn encode_static_response(
+    mut response: Response,
+    body: Bytes,
+    encoding: StaticEncoding,
+    is_head: bool,
+    permits: Arc<Semaphore>,
+) -> Response {
+    if encoding.varies {
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    }
+    if !encoding.gzip || response.status() != StatusCode::OK {
+        return response;
+    }
+    let Ok(permit) = permits.try_acquire_owned() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "compression busy").into_response();
+    };
+    let compressed = tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let _permit = permit;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&body)?;
+        encoder.finish()
+    })
+    .await;
+    let Ok(Ok(compressed)) = compressed else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    response
+        .headers_mut()
+        .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&compressed.len().to_string()).expect("numeric length"),
+    );
+    *response.body_mut() = if is_head {
+        Body::empty()
+    } else {
+        Body::from(compressed)
+    };
+    response
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ByteRange {
+    Ignore,
+    Unsatisfiable,
+    Selected(u64, u64),
+}
+
+// Multiple ranges and If-Range are deliberately ignored until multipart ranges and strong
+// validators are supported. This avoids serving incorrect partial representations.
+fn requested_range(request: &Request, length: u64) -> ByteRange {
+    fn decimal(value: &str) -> Option<u64> {
+        (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| value.parse().ok())
+            .flatten()
+    }
+    if request.method() != Method::GET || request.headers().contains_key(header::IF_RANGE) {
+        return ByteRange::Ignore;
+    }
+    let mut headers = request.headers().get_all(header::RANGE).iter();
+    let Some(value) = headers.next().and_then(|value| value.to_str().ok()) else {
+        return ByteRange::Ignore;
+    };
+    if headers.next().is_some() {
+        return ByteRange::Ignore;
+    }
+    let Some((unit, spec)) = value.split_once('=') else {
+        return ByteRange::Ignore;
+    };
+    if !unit.trim().eq_ignore_ascii_case("bytes") || spec.contains(',') {
+        return ByteRange::Ignore;
+    }
+    let Some((start, end)) = spec.trim().split_once('-') else {
+        return ByteRange::Ignore;
+    };
+    if start.is_empty() {
+        let Some(suffix) = decimal(end) else {
+            return ByteRange::Ignore;
+        };
+        if suffix == 0 || length == 0 {
+            return ByteRange::Unsatisfiable;
+        }
+        return ByteRange::Selected(length.saturating_sub(suffix), length - 1);
+    }
+    let Some(start) = decimal(start) else {
+        return ByteRange::Ignore;
+    };
+    let end = if end.is_empty() {
+        u64::MAX
+    } else {
+        let Some(end) = decimal(end) else {
+            return ByteRange::Ignore;
+        };
+        if end < start {
+            return ByteRange::Ignore;
+        }
+        end
+    };
+    if start >= length {
+        return ByteRange::Unsatisfiable;
+    }
+    ByteRange::Selected(start, end.min(length - 1))
+}
+
+fn add_static_headers(response: &mut Response, modified: Option<SystemTime>) {
+    response
+        .headers_mut()
+        .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    if let Some(modified) = modified.filter(|time| {
+        *time <= SystemTime::now()
+            && time
+                .duration_since(UNIX_EPOCH)
+                .is_ok_and(|value| value.as_secs() < 253_402_300_800)
+    }) && let Ok(value) = HeaderValue::from_str(&httpdate::fmt_http_date(modified))
+    {
+        response.headers_mut().insert(header::LAST_MODIFIED, value);
+    }
+}
+
+fn date_at_or_before(modified: SystemTime, date: SystemTime) -> bool {
+    match (
+        modified.duration_since(UNIX_EPOCH),
+        date.duration_since(UNIX_EPOCH),
+    ) {
+        (Ok(modified), Ok(date)) => modified.as_secs() <= date.as_secs(),
+        _ => false,
+    }
+}
+
+fn static_precondition_response(
+    headers: &HeaderMap,
+    modified: Option<SystemTime>,
+) -> Option<Response> {
+    let modified = modified.filter(|time| *time <= SystemTime::now());
+    // No ETag is emitted. A wildcard can match existence; all other If-Match tags fail.
+    if headers.contains_key(header::IF_MATCH) {
+        let matches = headers
+            .get_all(header::IF_MATCH)
+            .iter()
+            .any(|value| value.as_bytes().trim_ascii() == b"*");
+        if !matches {
+            let mut response = StatusCode::PRECONDITION_FAILED.into_response();
+            add_static_headers(&mut response, modified);
+            return Some(response);
+        }
+    } else if let (Some(modified), Some(date)) = (
+        modified,
+        headers
+            .get(header::IF_UNMODIFIED_SINCE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| httpdate::parse_http_date(v).ok()),
+    ) && !date_at_or_before(modified, date)
+    {
+        let mut response = StatusCode::PRECONDITION_FAILED.into_response();
+        add_static_headers(&mut response, Some(modified));
+        return Some(response);
+    }
+    let unchanged = if headers.contains_key(header::IF_NONE_MATCH) {
+        headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .any(|value| value.as_bytes().trim_ascii() == b"*")
+    } else {
+        modified
+            .zip(
+                headers
+                    .get(header::IF_MODIFIED_SINCE)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| httpdate::parse_http_date(v).ok()),
+            )
+            .is_some_and(|(modified, date)| date_at_or_before(modified, date))
+    };
+    if unchanged {
+        let mut response = StatusCode::NOT_MODIFIED.into_response();
+        add_static_headers(&mut response, modified);
+        Some(response)
+    } else {
+        None
+    }
+}
+
+fn set_content_range(response: &mut Response, start: u64, end: u64, length: u64) {
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    response.headers_mut().insert(
+        header::CONTENT_RANGE,
+        HeaderValue::from_str(&format!("bytes {start}-{end}/{length}")).expect("numeric range"),
+    );
+}
+
+fn range_not_satisfiable(length: u64, modified: Option<SystemTime>) -> Response {
+    let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+    response.headers_mut().insert(
+        header::CONTENT_RANGE,
+        HeaderValue::from_str(&format!("bytes */{length}")).expect("numeric length"),
+    );
+    add_static_headers(&mut response, modified);
+    response
+}
+
+#[cfg(target_os = "linux")]
+async fn directory_response(
+    root: &Path,
+    decoded_path: &str,
+    raw_path: &str,
+    query: Option<&str>,
+    is_head: bool,
+) -> Result<Option<Response>, StatusCode> {
+    use std::os::fd::AsRawFd;
+
+    let relative = decoded_path.trim_start_matches('/');
+    let relative = if relative.is_empty() { "." } else { relative };
+    let Ok(directory) = open_contained(root, Path::new(relative), true).await else {
+        return Ok(None);
+    };
+    if !directory
+        .metadata()
+        .await
+        .map_err(|_| StatusCode::FORBIDDEN)?
+        .is_dir()
+    {
+        return Ok(None);
+    }
+    if !raw_path.ends_with('/') {
+        // A Location beginning with two slashes is a network-path reference, not a local path.
+        if !raw_path.starts_with('/') || raw_path.starts_with("//") {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let mut location = format!("{raw_path}/");
+        if let Some(query) = query {
+            location.push('?');
+            location.push_str(query);
+        }
+        let mut response = StatusCode::PERMANENT_REDIRECT.into_response();
+        response.headers_mut().insert(
+            header::LOCATION,
+            HeaderValue::from_str(&location).map_err(|_| StatusCode::BAD_REQUEST)?,
+        );
+        return Ok(Some(response));
+    }
+
+    let directory = directory.into_std().await;
+    let entries = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<(String, bool)>> {
+        // openat2 already pinned the directory under the trusted root; keep that descriptor open
+        // while enumerating it instead of reopening the original, raceable request path.
+        let fd_path = format!("/proc/self/fd/{}", directory.as_raw_fd());
+        let mut entries = Vec::new();
+        let mut names_bytes = 0usize;
+        let mut examined = 0usize;
+        for entry in std::fs::read_dir(fd_path)? {
+            examined += 1;
+            if examined > 4096 {
+                return Err(std::io::Error::other("directory scan exceeds limits"));
+            }
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if !kind.is_file() && !kind.is_dir() {
+                continue;
+            }
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            names_bytes = names_bytes.saturating_add(name.len());
+            if entries.len() >= 1024 || names_bytes > 256 * 1024 {
+                return Err(std::io::Error::other("directory listing exceeds limits"));
+            }
+            entries.push((name, kind.is_dir()));
+        }
+        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        Ok(entries)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::FORBIDDEN)?;
+
+    fn escape(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;")
+    }
+    let title = escape(decoded_path);
+    let mut html = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Index of {title}</title></head><body><h1>Index of {title}</h1><ul>"
+    );
+    for (name, is_dir) in entries {
+        let encoded =
+            percent_encoding::utf8_percent_encode(&name, percent_encoding::NON_ALPHANUMERIC);
+        let suffix = if is_dir { "/" } else { "" };
+        html.push_str(&format!(
+            "<li><a href=\"{encoded}{suffix}\">{}{suffix}</a></li>",
+            escape(&name)
+        ));
+    }
+    html.push_str("</ul></body></html>");
+    let length = html.len();
+    let mut response = Response::new(if is_head {
+        Body::empty()
+    } else {
+        Body::from(html)
+    });
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&length.to_string()).expect("numeric length"),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; base-uri 'none'; form-action 'none'"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(Some(response))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn directory_response(
+    _root: &Path,
+    _decoded_path: &str,
+    _raw_path: &str,
+    _query: Option<&str>,
+    _is_head: bool,
+) -> Result<Option<Response>, StatusCode> {
+    // Race-resistant directory enumeration is currently Linux-only.
+    Ok(None)
 }
 
 struct ResolvedTarget {
@@ -1182,6 +1727,9 @@ mod tests {
                 Arc::clone(&metrics),
             )),
             request_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests)),
+            compression_permits: Arc::new(Semaphore::new(
+                config.server.max_in_flight_requests.min(16),
+            )),
             scheduler: SchedulerHandle::start(config.websocket.clone(), Arc::clone(&metrics)),
             config,
             metrics,
@@ -1345,6 +1893,18 @@ mod tests {
         assert_eq!(response.headers().get(header::SERVER).unwrap(), "RWS");
     }
 
+    #[test]
+    fn static_headers_omit_dates_outside_http_date_range() {
+        let mut response = StatusCode::OK.into_response();
+        add_static_headers(&mut response, Some(UNIX_EPOCH - Duration::from_secs(1)));
+        assert!(!response.headers().contains_key(header::LAST_MODIFIED));
+        add_static_headers(
+            &mut response,
+            Some(SystemTime::now() + Duration::from_secs(3600)),
+        );
+        assert!(!response.headers().contains_key(header::LAST_MODIFIED));
+    }
+
     #[tokio::test]
     async fn static_get_and_head_have_matching_length_and_mime() {
         let directory = tempdir().unwrap();
@@ -1387,6 +1947,327 @@ mod tests {
                 .static_cache_hits_total
                 .load(Ordering::Relaxed),
             2
+        );
+    }
+
+    #[tokio::test]
+    async fn static_ranges_and_date_conditions_work_cached_and_streamed() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("asset.txt"), "abcdefghij").unwrap();
+        for max_file in [4, 1024] {
+            let config: Config = toml::from_str(&format!(
+                "[static_cache]\nenabled=true\nmax_total_bytes=1024\nmax_file_bytes={max_file}\n[[sites]]\nhost='example.test'\nroot='{}'\n", directory.path().display()
+            )).unwrap();
+            let state = test_state(config);
+            let site = state.sites.get("example.test").unwrap();
+            let get = |method: Method, key: &'static str, value: &str| {
+                Request::builder()
+                    .method(method)
+                    .uri("/asset.txt")
+                    .header(key, value)
+                    .body(Body::empty())
+                    .unwrap()
+            };
+            // Repeat so the same assertions cover a warm cached hit as well as a cold read.
+            for _ in 0..2 {
+                let response =
+                    static_or_php(&state, site, get(Method::GET, "range", "bytes=2-5")).await;
+                assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+                assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
+                assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+                assert_eq!(to_bytes(response.into_body(), 32).await.unwrap(), "cdef");
+            }
+            let response = static_or_php(&state, site, get(Method::GET, "range", "bytes=-3")).await;
+            assert_eq!(to_bytes(response.into_body(), 32).await.unwrap(), "hij");
+            let response = static_or_php(&state, site, get(Method::GET, "range", "bytes=7-")).await;
+            assert_eq!(to_bytes(response.into_body(), 32).await.unwrap(), "hij");
+            let response =
+                static_or_php(&state, site, get(Method::GET, "range", "bytes=+2-4")).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let response =
+                static_or_php(&state, site, get(Method::GET, "range", "bytes=50-")).await;
+            assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+            assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */10");
+            let response =
+                static_or_php(&state, site, get(Method::GET, "range", "bytes=0-1,3-4")).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                to_bytes(response.into_body(), 32).await.unwrap(),
+                "abcdefghij"
+            );
+            let response =
+                static_or_php(&state, site, get(Method::HEAD, "range", "bytes=0-1")).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_LENGTH], "10");
+            assert!(to_bytes(response.into_body(), 32).await.unwrap().is_empty());
+            let response = static_or_php(
+                &state,
+                site,
+                Request::builder()
+                    .uri("/asset.txt")
+                    .header("range", "bytes=0-1")
+                    .header("if-range", "\"old\"")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let last_modified = response.headers()[header::LAST_MODIFIED]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let response = static_or_php(
+                &state,
+                site,
+                get(Method::GET, "if-modified-since", &last_modified),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+            assert!(to_bytes(response.into_body(), 32).await.unwrap().is_empty());
+            let response = static_or_php(
+                &state,
+                site,
+                Request::builder()
+                    .uri("/asset.txt")
+                    .header("if-modified-since", &last_modified)
+                    .header("range", "bytes=0-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+            let response =
+                static_or_php(&state, site, get(Method::GET, "if-none-match", "*")).await;
+            assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+            let response = static_or_php(
+                &state,
+                site,
+                get(
+                    Method::GET,
+                    "if-unmodified-since",
+                    "Thu, 01 Jan 1970 00:00:00 GMT",
+                ),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+            let response =
+                static_or_php(&state, site, get(Method::GET, "if-match", "\"unknown\"")).await;
+            assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+            let response = static_or_php(
+                &state,
+                site,
+                Request::builder()
+                    .uri("/asset.txt")
+                    .header("if-none-match", "\"unknown\"")
+                    .header("if-modified-since", &last_modified)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let response =
+                static_or_php(&state, site, get(Method::GET, "accept-encoding", "gzip")).await;
+            assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+            std::fs::write(directory.path().join("empty.txt"), "").unwrap();
+            let response = static_or_php(
+                &state,
+                site,
+                Request::builder()
+                    .uri("/empty.txt")
+                    .header("range", "bytes=0-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+            assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */0");
+        }
+    }
+
+    #[tokio::test]
+    async fn opt_in_gzip_respects_negotiation_range_and_head() {
+        use std::io::Read;
+        let directory = tempdir().unwrap();
+        let contents = "hello static compression ".repeat(30);
+        std::fs::write(directory.path().join("asset.txt"), &contents).unwrap();
+        let config: Config = toml::from_str(&format!(
+            "[static_cache]\nenabled=true\n[[sites]]\nhost='example.test'\nroot='{}'\ngzip=true\n",
+            directory.path().display()
+        ))
+        .unwrap();
+        let state = test_state(config);
+        let site = state.sites.get("example.test").unwrap();
+        let request = |method: Method, encoding: &str| {
+            Request::builder()
+                .method(method)
+                .uri("/asset.txt")
+                .header("accept-encoding", encoding)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let response = static_or_php(&state, site, request(Method::GET, "gzip")).await;
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        assert_eq!(response.headers()[header::VARY], "Accept-Encoding");
+        let length = response.headers()[header::CONTENT_LENGTH]
+            .to_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let compressed = to_bytes(response.into_body(), 2048).await.unwrap();
+        assert_eq!(compressed.len(), length);
+        let mut decoded = String::new();
+        flate2::read::GzDecoder::new(compressed.as_ref())
+            .read_to_string(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, contents);
+        let response = static_or_php(&state, site, request(Method::HEAD, "gzip")).await;
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        assert_eq!(
+            response.headers()[header::CONTENT_LENGTH]
+                .to_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap(),
+            length
+        );
+        assert!(
+            to_bytes(response.into_body(), 2048)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let response = static_or_php(&state, site, request(Method::GET, "gzip;q=0")).await;
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(response.headers()[header::VARY], "Accept-Encoding");
+        let response = static_or_php(&state, site, request(Method::GET, "*, gzip;q=0")).await;
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        let response = static_or_php(
+            &state,
+            site,
+            request(Method::GET, "gzip;q=0.2, identity;q=0.9"),
+        )
+        .await;
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        let response =
+            static_or_php(&state, site, request(Method::GET, "identity;q=0, gzip;q=0")).await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+        let response = static_or_php(
+            &state,
+            site,
+            Request::builder()
+                .uri("/asset.txt")
+                .header("accept-encoding", "gzip")
+                .header("range", "bytes=0-4")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(to_bytes(response.into_body(), 100).await.unwrap(), "hello");
+        let response = static_or_php(
+            &state,
+            site,
+            Request::builder()
+                .uri("/asset.txt")
+                .header("accept-encoding", "gzip, identity;q=0")
+                .header("range", "bytes=0-4")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn directory_listing_is_opt_in_contained_and_escaped() {
+        use std::os::unix::fs::symlink;
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::create_dir(root.path().join("files")).unwrap();
+        std::fs::write(root.path().join("files/<script>.txt"), "public").unwrap();
+        std::fs::write(root.path().join("files/.secret"), "hidden").unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "outside").unwrap();
+        symlink(outside.path(), root.path().join("files/escape")).unwrap();
+        let make_state = |enabled| {
+            let config: Config = toml::from_str(&format!(
+                "[[sites]]\nhost='example.test'\nroot='{}'\ndirectory_listing={enabled}\n",
+                root.path().display()
+            ))
+            .unwrap();
+            test_state(config)
+        };
+        let request = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let disabled = make_state(false);
+        let site = disabled.sites.get("example.test").unwrap();
+        assert_eq!(
+            static_or_php(&disabled, site, request("/files/"))
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let enabled = make_state(true);
+        let site = enabled.sites.get("example.test").unwrap();
+        let response = static_or_php(&enabled, site, request("/files?sort=name")).await;
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(response.headers()[header::LOCATION], "/files/?sort=name");
+        let response = static_or_php(&enabled, site, request("/files/")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .contains_key(header::CONTENT_SECURITY_POLICY)
+        );
+        let html = String::from_utf8(
+            to_bytes(response.into_body(), 16_384)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("&lt;script&gt;.txt"));
+        assert!(html.contains("%3Cscript%3E%2Etxt"));
+        assert!(
+            !html.contains(".secret") && !html.contains("escape") && !html.contains("<script>")
+        );
+        assert_ne!(
+            static_or_php(&enabled, site, request("/files/escape/"))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let response = static_or_php(
+            &enabled,
+            site,
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/files/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_LENGTH]
+                .to_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap(),
+            html.len()
+        );
+        assert!(
+            to_bytes(response.into_body(), 16_384)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        std::fs::write(root.path().join("files/index.html"), "index wins").unwrap();
+        let response = static_or_php(&enabled, site, request("/files/")).await;
+        assert_eq!(
+            to_bytes(response.into_body(), 16_384).await.unwrap(),
+            "index wins"
         );
     }
 

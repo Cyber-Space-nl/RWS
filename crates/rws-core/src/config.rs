@@ -173,6 +173,12 @@ pub struct SiteConfig {
     pub index: String,
     #[serde(default)]
     pub php: bool,
+    /// Serve generated directory indexes only when explicitly enabled.
+    #[serde(default)]
+    pub directory_listing: bool,
+    /// Compress eligible static responses when the client accepts gzip.
+    #[serde(default)]
+    pub gzip: bool,
     pub php_fpm: Option<String>,
     pub front_controller: Option<String>,
     pub access_log: Option<PathBuf>,

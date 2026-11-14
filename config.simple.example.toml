@@ -36,6 +36,9 @@ host = "example.test"
 mode = "static"
 root = "/var/www/example.test/public"
 index = "index.html"
+# Optional static-file features (both default to false):
+# gzip = true
+# directory_listing = true  # Linux only; exposes visible directory entries
 php = true
 php_fpm = "unix:/run/php/php8.3-fpm.sock"
 # Send requests for paths that do not exist to this PHP script.
