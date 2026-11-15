@@ -42,4 +42,6 @@ systemctl daemon-reload
 echo "rws installed but not started."
 echo "Edit /etc/rws/config.toml, then run:"
 echo "  /usr/local/bin/rws --config /etc/rws/config.toml --check"
+echo "  For local PHP-FPM startup ordering, run: sudo bash scripts/configure-php-fpm.sh php8.3-fpm.service"
+echo "  Replace php8.3-fpm.service with the local service name, or skip this for remote/unused PHP."
 echo "  systemctl enable --now rws"

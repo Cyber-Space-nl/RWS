@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 
-VERSION = '0.1.0-beta.5'
+VERSION = '0.1.0-beta.6'
 TARGET = 'x86_64-unknown-linux-gnu'
 BINARIES = ('rws', 'rws-ws-load', 'rws-bench')
 MAX_GLIBC = (2, 35)

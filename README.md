@@ -13,7 +13,7 @@ or Apache.
 reverse proxying and adaptive WebSocket scheduling. Configure the features you need in one
 configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
 
-The [v0.1.0-beta.5 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.5)
+The [v0.1.0-beta.6 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.6)
 provides experimental Linux x86-64 binaries and release notes. Visit
 [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
@@ -77,11 +77,13 @@ See [Configuration](#configuration) for the size limits and other details.
 ## Documentation and platforms
 
 - [Architecture](docs/ARCHITECTURE.md), [security testing](docs/SECURITY_TESTING.md), [benchmarking](docs/BENCHMARKING.md), [compatibility and overload checks](docs/validation/compatibility-overload-2026-11-14.md), [Ubuntu 22.04 VM validation](docs/validation/ubuntu-22.04-beta5.md), [Ubuntu 24.04 VM validation](docs/validation/ubuntu-24.04-beta5.md) and [independent validation](docs/EXTERNAL_VALIDATION.md)
+- [Ubuntu 22.04 PHP-FPM startup-order check](docs/validation/ubuntu-22.04-php-order.md) for the
+  beta.6 service configuration.
 - [Contributing](CONTRIBUTING.md), [security policy](SECURITY.md) and [changelog](CHANGELOG.md)
 - Linux is the deployment target; Ubuntu 24.04 on WSL2 and Linux GitHub Actions runners have been
   used for builds and tests. Linux 5.6 or newer is required for contained static-file opening.
   Windows workspace tests are useful for development but Windows deployment is not established.
-- The beta.5 Linux x86-64 archive is built against the Ubuntu 22.04 glibc baseline. The older
+- The beta.6 Linux x86-64 archive is built against the Ubuntu 22.04 glibc baseline. The older
   beta.4 server binary does not start on Ubuntu 22.04 because it requires GLIBC 2.38. A clean
   Ubuntu 22.04 VM test passed with systemd and PHP 8.1 after changing the configured socket; the
   shipped unit's PHP 8.3 ordering and the other limits are described in the validation report.
@@ -225,6 +227,7 @@ cargo test --workspace
 sudo ./scripts/install.sh
 sudoedit /etc/rws/config.toml
 sudo /usr/local/bin/rws --config /etc/rws/config.toml --check
+sudo bash scripts/configure-php-fpm.sh php8.3-fpm.service
 sudo systemctl enable --now rws
 ```
 
@@ -256,6 +259,16 @@ If Ubuntu uses a different PHP-FPM socket, find it and update `php_fpm`:
 ```bash
 find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' -print
 ```
+
+With beta.6 source, choose the matching **local** systemd service with
+`sudo bash scripts/configure-php-fpm.sh php8.1-fpm.service` for PHP 8.1, or use the appropriate
+service for your installation. The helper adds a systemd drop-in with `Wants=` and `After=`;
+these request the service and order RWS after its startup. It does not change the configured
+socket, enable a PHP service separately, or restart RWS. It accepts multiple local service names
+when needed and refuses to overwrite a different existing drop-in. Review and edit that drop-in
+manually when changing services. `Wants=` allows RWS to start even if PHP-FPM fails, so PHP
+requests can still fail; verify the service and socket. Skip the helper for unused or remote PHP.
+The beta.5 release predates this helper and the version-independent service unit.
 
 ## TLS
 
@@ -441,7 +454,8 @@ sudo systemctl start rws
 sudo ./scripts/uninstall.sh
 ```
 
-The uninstall script preserves `/etc/rws`, logs, `/var/www` data and older RWS installations.
+The uninstall script preserves `/etc/rws`, systemd drop-ins under `/etc/systemd/system/rws.service.d`,
+logs, `/var/www` data and older RWS installations. Review preserved drop-ins before reinstalling.
 
 ## Developer checks
 

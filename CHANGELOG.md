@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## 0.1.0-beta.6 — 2026-11-15
+
+### Changed
+
+- PHP-FPM systemd startup ordering is now configured explicitly per local service through a
+  non-clobbering helper instead of hard-coding PHP 8.3 in the RWS unit.
+
 ## 0.1.0-beta.5 — 2026-11-14
 
 ### Added

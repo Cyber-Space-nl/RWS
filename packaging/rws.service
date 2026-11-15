@@ -1,7 +1,7 @@
 [Unit]
 Description=Rust WebServer
 Documentation=file:/usr/share/doc/rws/README.md
-After=network-online.target php8.3-fpm.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

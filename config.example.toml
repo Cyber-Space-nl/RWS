@@ -48,6 +48,8 @@ index = "index.html"
 # directory_listing = true  # Linux only; exposes visible directory entries
 php = true
 php_fpm = "unix:/run/php/php8.3-fpm.sock"
+# For local systemd-managed PHP-FPM, configure matching startup ordering separately:
+# sudo bash scripts/configure-php-fpm.sh php8.3-fpm.service
 # Send requests for paths that do not exist to this PHP script.
 # front_controller = "index.php"
 # Optional per-site logs. Error logs contain requests with status 4xx or 5xx.

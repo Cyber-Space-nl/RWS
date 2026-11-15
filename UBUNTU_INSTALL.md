@@ -25,6 +25,7 @@ cargo test --locked --workspace
 sudo ./scripts/install.sh
 sudoedit /etc/rws/config.toml
 sudo /usr/local/bin/rws --config /etc/rws/config.toml --check
+sudo bash scripts/configure-php-fpm.sh php8.3-fpm.service
 sudo systemctl enable --now rws
 curl -i -H 'Host: example.test' http://127.0.0.1:8080/
 ```
@@ -32,6 +33,13 @@ curl -i -H 'Host: example.test' http://127.0.0.1:8080/
 The installer leaves the service stopped, preserves an existing `/etc/rws/config.toml`, and backs
 up existing `rws` binary, unit and logrotate files. It refuses to run while `rws-simple` is active.
 The example enables PHP-FPM; set `php = false` when it is not needed.
+For a different local PHP-FPM version, replace `php8.3-fpm.service` above with its systemd
+service name and set `php_fpm` to its socket. For example, Ubuntu 22.04 commonly uses
+`php8.1-fpm.service` and `/run/php/php8.1-fpm.sock`. The helper creates a drop-in that requests
+the selected service and orders RWS after it. It does not edit the socket or restart RWS, and
+will not overwrite a different existing drop-in. Skip it for remote or unused PHP. Because the
+dependency is `Wants=`, RWS can still start if PHP-FPM fails; check PHP-FPM and its socket.
+These instructions apply to beta.6 source; beta.5 predates the helper.
 `--check` does not verify runtime access as user `rws`, port availability, PHP-FPM connectivity or
 certificate trust. Inspect `systemctl status rws` and the journal after starting.
 
