@@ -393,7 +393,9 @@ php_fpm = "tcp:127.0.0.1:9000"
 ```
 
 Site logs use bounded asynchronous queues. Access entries contain the client, host, method, URI,
-HTTP version, status, response length when known and request duration. Error logs contain all
+HTTP version, status, response length when known, request duration and the `Referer` header
+(`"-"` when absent or not representable as text). Referrers can contain sensitive URLs or query
+parameters; protect log access and retention accordingly. Error logs contain all
 4xx/5xx requests plus available internal PHP, static-file and proxy errors. The Ubuntu units
 create the writable log directory and the installer configures daily rotation.
 

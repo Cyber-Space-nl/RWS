@@ -354,6 +354,7 @@ struct RequestLogInfo {
     uri: String,
     version: String,
     remote: String,
+    referer: String,
     started: std::time::Instant,
 }
 
@@ -370,6 +371,12 @@ impl RequestLogInfo {
                 .map_or("/", |value| value.as_str())
                 .to_owned(),
             version: format!("{:?}", request.version()),
+            referer: request
+                .headers()
+                .get(header::REFERER)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("-")
+                .to_owned(),
             remote: request
                 .extensions()
                 .get::<ConnectInfo<std::net::SocketAddr>>()
@@ -387,7 +394,7 @@ impl RequestLogInfo {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("-");
         let line = format!(
-            "{} remote={} host={} method={} uri={} version={} status={} bytes={} duration_us={}\n",
+            "{} remote={} host={} method={} uri={} version={} status={} bytes={} duration_us={} referer={}\n",
             timestamp_millis(),
             quoted(&self.remote),
             quoted(&site.config.host),
@@ -397,6 +404,7 @@ impl RequestLogInfo {
             status,
             bytes,
             self.started.elapsed().as_micros(),
+            quoted(&self.referer),
         );
         if let Some(access_log) = &site.access_log {
             access_log.write(line.clone());
@@ -3858,11 +3866,21 @@ mod tests {
         let mut request = Request::builder()
             .uri("/")
             .header(header::HOST, "example.test")
+            .header(header::REFERER, "https://example.org/a?x=\"quoted\"")
             .body(Body::empty())
             .unwrap();
         request.extensions_mut().insert(ConnectInfo(
             "192.0.2.10:12345".parse::<std::net::SocketAddr>().unwrap(),
         ));
+        let response = tower::ServiceExt::oneshot(app.clone(), request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let request = Request::builder()
+            .uri("/")
+            .header(header::HOST, "example.test")
+            .body(Body::empty())
+            .unwrap();
         let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -3870,6 +3888,8 @@ mod tests {
                 let contents = std::fs::read_to_string(&log_path).unwrap_or_default();
                 if contents.contains("remote=\"192.0.2.10:12345\"")
                     && contents.contains("status=200")
+                    && contents.contains("referer=\"https://example.org/a?x=\\\"quoted\\\"\"")
+                    && contents.contains("referer=\"-\"")
                 {
                     break;
                 }
