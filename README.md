@@ -20,6 +20,12 @@ provides experimental Linux x86-64 binaries and release notes. Visit
 Beta.3 introduces the single `rws` server binary. The older beta.2 release contains separate
 server variants; existing installations require a manual migration and a tested rollback plan.
 
+## Running on RWS
+
+[insaider.nl](https://insaider.nl/) has been running on RWS since 16 November 2026, using native
+HTTPS, static-file serving and PHP-FPM. Its source build also includes automatic HTTP-to-HTTPS
+redirects; this feature is newer than the published beta.6 download.
+
 ## Local quickstart
 
 On Linux with Rust 1.88 or newer, run the included loopback-only example without root privileges:
