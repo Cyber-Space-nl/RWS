@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## Unreleased
+
+### Added
+
+- Automatic HTTP-to-HTTPS 308 redirects when TLS is configured, with a configurable opt-out
+  and a static-only ACME HTTP-01 exception for certificate renewal.
+
 ## 0.1.0-beta.6 — 2026-11-15
 
 ### Changed

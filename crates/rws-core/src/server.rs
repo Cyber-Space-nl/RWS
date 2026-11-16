@@ -80,7 +80,7 @@ pub async fn serve(config: Config) -> Result<()> {
 
     crate::controller::start_if_enabled(Arc::clone(&config), Arc::clone(&metrics));
 
-    let app = public_router(&config, state.clone());
+    let app = http_router(&config, state.clone());
     let metrics_app = Router::new()
         .route("/healthz", get(|| async { (StatusCode::OK, "ok\n") }))
         .route("/metrics", get(metrics_handler))
@@ -203,6 +203,17 @@ fn public_router(config: &Config, state: AppState) -> Router {
         .route(&config.websocket.path, get(websocket_upgrade))
         .fallback(any(dispatch_request))
         .with_state(state)
+}
+
+fn http_router(config: &Config, state: AppState) -> Router {
+    if config.tls.is_some() && config.server.redirect_http_to_https {
+        // Include the native WebSocket path: plaintext upgrades must not bypass HTTPS.
+        Router::new()
+            .fallback(any(dispatch_https_redirect))
+            .with_state(state)
+    } else {
+        public_router(config, state)
+    }
 }
 
 fn build_sites(config: &Config) -> Result<HashMap<String, Site>> {
@@ -342,6 +353,14 @@ fn write_site_error(site: &Site, message: &str) {
 }
 
 async fn dispatch_request(State(state): State<AppState>, request: Request) -> Response {
+    dispatch(state, request, false).await
+}
+
+async fn dispatch_https_redirect(State(state): State<AppState>, request: Request) -> Response {
+    dispatch(state, request, true).await
+}
+
+async fn dispatch(state: AppState, request: Request, redirect_https: bool) -> Response {
     state
         .metrics
         .http_requests_total
@@ -356,12 +375,16 @@ async fn dispatch_request(State(state): State<AppState>, request: Request) -> Re
         return response;
     };
     let request_log = RequestLogInfo::capture(site, &request);
-    let mut response = match site.config.mode {
-        SiteMode::Static => static_or_php(&state, site, request).await,
-        SiteMode::Proxy => match state.request_permits.try_acquire() {
-            Ok(_permit) => proxy_request(&state, site, request).await,
-            Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response(),
-        },
+    let mut response = if redirect_https {
+        https_redirect_or_challenge(&state, site, request).await
+    } else {
+        match site.config.mode {
+            SiteMode::Static => static_or_php(&state, site, request).await,
+            SiteMode::Proxy => match state.request_permits.try_acquire() {
+                Ok(_permit) => proxy_request(&state, site, request).await,
+                Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response(),
+            },
+        }
     };
     if response.status().is_client_error() || response.status().is_server_error() {
         state
@@ -374,6 +397,53 @@ async fn dispatch_request(State(state): State<AppState>, request: Request) -> Re
         request_log.write(site, &response);
     }
     response
+}
+
+async fn https_redirect_or_challenge(state: &AppState, site: &Site, request: Request) -> Response {
+    // HTTP-01 tokens use only base64url characters. Never execute PHP, invoke a
+    // front controller, list a directory or forward to an upstream over HTTP.
+    let challenge = request
+        .uri()
+        .path()
+        .strip_prefix("/.well-known/acme-challenge/")
+        .is_some_and(|token| {
+            !token.is_empty()
+                && token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        });
+    if challenge && matches!(*request.method(), Method::GET | Method::HEAD) {
+        if site.config.mode != SiteMode::Static {
+            return (StatusCode::NOT_FOUND, "not found").into_response();
+        }
+        let mut challenge_site = site.clone();
+        challenge_site.config.php = false;
+        challenge_site.config.front_controller = None;
+        challenge_site.config.directory_listing = false;
+        return static_or_php(state, &challenge_site, request).await;
+    }
+
+    // Use a configured host, never forwarded headers or a client-supplied
+    // authority/port, so untrusted Host values cannot create an open redirect.
+    let host = normalize_host(&site.config.host);
+    let port = state.config.server.https_listen.port();
+    let authority = if port == 443 {
+        host
+    } else {
+        format!("{host}:{port}")
+    };
+    let path = request
+        .uri()
+        .path_and_query()
+        .map(|value| value.as_str())
+        .filter(|value| value.starts_with('/'))
+        .unwrap_or("/");
+    let location = format!("https://{authority}{path}");
+    (
+        StatusCode::PERMANENT_REDIRECT,
+        [(header::LOCATION, location)],
+    )
+        .into_response()
 }
 
 fn request_host(request: &Request) -> Option<Cow<'_, str>> {
@@ -2013,6 +2083,184 @@ mod tests {
             config,
             metrics,
         }
+    }
+
+    #[tokio::test]
+    async fn http_redirect_preserves_target_and_method_and_uses_configured_authority() {
+        let directory = tempdir().unwrap();
+        for port in [443, 8443] {
+            let config: Config = toml::from_str(&format!(
+                "[server]\nhttps_listen='127.0.0.1:{port}'\n[tls]\ncert_file='unused'\nkey_file='unused'\n[[sites]]\nhost='Example.TEST'\nroot='{}'\n",
+                directory.path().display()
+            ))
+            .unwrap();
+            let state = test_state(config.clone());
+            let app = http_router(&config, state.clone());
+            for method in [Method::GET, Method::HEAD, Method::POST, Method::OPTIONS] {
+                for path in [
+                    "/",
+                    "/a%20b?x=1&next=%2F",
+                    "/_rws/ws",
+                    "//external.test/path",
+                ] {
+                    let request = Request::builder()
+                        .method(method.clone())
+                        .uri(path)
+                        .header(header::HOST, "EXAMPLE.TEST:1234")
+                        .header("forwarded", "host=external.test;proto=https")
+                        .header("x-forwarded-proto", "https")
+                        .header("x-forwarded-host", "external.test")
+                        .body(Body::from("request body"))
+                        .unwrap();
+                    let response = tower::ServiceExt::oneshot(app.clone(), request)
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+                    let authority = if port == 443 {
+                        "example.test".to_owned()
+                    } else {
+                        format!("example.test:{port}")
+                    };
+                    assert_eq!(
+                        response.headers()[header::LOCATION],
+                        format!("https://{authority}{path}")
+                    );
+                    assert_eq!(response.headers()[header::SERVER], "RWS");
+                }
+            }
+            assert_eq!(
+                state.metrics.http_requests_total.load(Ordering::Relaxed),
+                16
+            );
+            for host in [None, Some("external.test")] {
+                let mut request = Request::builder().uri("/");
+                if let Some(host) = host {
+                    request = request.header(header::HOST, host);
+                }
+                let response =
+                    tower::ServiceExt::oneshot(app.clone(), request.body(Body::empty()).unwrap())
+                        .await
+                        .unwrap();
+                assert_eq!(response.status(), StatusCode::MISDIRECTED_REQUEST);
+                assert!(!response.headers().contains_key(header::LOCATION));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_redirect_requires_tls_and_can_be_disabled_without_redirecting_https() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("index.html"), "http ok").unwrap();
+        for tls in ["", "[tls]\ncert_file='unused'\nkey_file='unused'\n"] {
+            for enabled in [true, false] {
+                let config: Config = toml::from_str(&format!(
+                    "[server]\nredirect_http_to_https={enabled}\n{tls}[[sites]]\nhost='example.test'\nroot='{}'\n",
+                    directory.path().display()
+                ))
+                .unwrap();
+                let state = test_state(config.clone());
+                for (app, should_redirect) in [
+                    (
+                        http_router(&config, state.clone()),
+                        !tls.is_empty() && enabled,
+                    ),
+                    (public_router(&config, state), false),
+                ] {
+                    let request = Request::builder()
+                        .uri("/")
+                        .header(header::HOST, "example.test")
+                        .body(Body::empty())
+                        .unwrap();
+                    let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if should_redirect {
+                            StatusCode::PERMANENT_REDIRECT
+                        } else {
+                            StatusCode::OK
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_acme_exception_is_static_only_and_does_not_fall_back_to_php() {
+        let directory = tempdir().unwrap();
+        let challenges = directory.path().join(".well-known/acme-challenge");
+        std::fs::create_dir_all(&challenges).unwrap();
+        std::fs::write(challenges.join("Token_01-az"), "key-authorization").unwrap();
+        std::fs::write(challenges.join("danger.php"), "<?php secret").unwrap();
+        std::fs::write(directory.path().join("index.php"), "<?php secret").unwrap();
+        let config: Config = toml::from_str(&format!(
+            "[tls]\ncert_file='unused'\nkey_file='unused'\n[[sites]]\nhost='example.test'\nroot='{}'\nphp=true\nphp_fpm='unix:/nonexistent.sock'\nfront_controller='index.php'\ndirectory_listing=true\n",
+            directory.path().display()
+        ))
+        .unwrap();
+        let app = http_router(&config, test_state(config.clone()));
+        for (method, token, status, expected_body) in [
+            (
+                Method::GET,
+                "Token_01-az",
+                StatusCode::OK,
+                "key-authorization",
+            ),
+            (Method::HEAD, "Token_01-az", StatusCode::OK, ""),
+            (Method::GET, "missing", StatusCode::NOT_FOUND, "not found"),
+            (
+                Method::GET,
+                "danger.php",
+                StatusCode::PERMANENT_REDIRECT,
+                "",
+            ),
+            (
+                Method::GET,
+                "../index.php",
+                StatusCode::PERMANENT_REDIRECT,
+                "",
+            ),
+            (
+                Method::GET,
+                "%2e%2e/index.php",
+                StatusCode::PERMANENT_REDIRECT,
+                "",
+            ),
+            (Method::GET, "", StatusCode::PERMANENT_REDIRECT, ""),
+            (
+                Method::POST,
+                "Token_01-az",
+                StatusCode::PERMANENT_REDIRECT,
+                "",
+            ),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(format!("/.well-known/acme-challenge/{token}"))
+                .header(header::HOST, "example.test")
+                .body(Body::empty())
+                .unwrap();
+            let response = tower::ServiceExt::oneshot(app.clone(), request)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{token}");
+            assert_eq!(
+                to_bytes(response.into_body(), 4096).await.unwrap(),
+                expected_body
+            );
+        }
+        let proxy_config: Config = toml::from_str(
+            "[tls]\ncert_file='unused'\nkey_file='unused'\n[[sites]]\nhost='example.test'\nmode='proxy'\nupstream='http://127.0.0.1:1'\n"
+        ).unwrap();
+        crate::tls::ensure_crypto_provider();
+        let app = http_router(&proxy_config, test_state(proxy_config.clone()));
+        let request = Request::builder()
+            .uri("/.well-known/acme-challenge/token")
+            .header(header::HOST, "example.test")
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

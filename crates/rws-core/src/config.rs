@@ -51,6 +51,8 @@ impl Default for StaticCacheConfig {
 pub struct ServerConfig {
     pub listen: SocketAddr,
     pub https_listen: SocketAddr,
+    /// Redirect HTTP to the HTTPS listener when TLS is configured.
+    pub redirect_http_to_https: bool,
     pub max_in_flight_requests: usize,
     pub listen_backlog: u32,
     pub max_body_bytes: usize,
@@ -66,6 +68,7 @@ impl Default for ServerConfig {
         Self {
             listen: "0.0.0.0:8080".parse().expect("valid default address"),
             https_listen: "0.0.0.0:8443".parse().expect("valid default address"),
+            redirect_http_to_https: true,
             max_in_flight_requests: 1024,
             listen_backlog: 1024,
             max_body_bytes: 8 * 1024 * 1024,

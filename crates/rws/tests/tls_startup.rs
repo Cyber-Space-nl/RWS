@@ -50,6 +50,9 @@ fn rws_checks_and_serves_https_with_valid_certificate() {
         String::from_utf8_lossy(&generated.stderr)
     );
     fs::write(dir.path().join("index.html"), "rws tls ok").unwrap();
+    let challenges = dir.path().join(".well-known/acme-challenge");
+    fs::create_dir_all(&challenges).unwrap();
+    fs::write(challenges.join("Test_token-01"), "test-key-authorization").unwrap();
     // Keep all sockets reserved until the addresses have been selected.
     let sockets: Vec<_> = (0..3)
         .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
@@ -117,4 +120,63 @@ fn rws_checks_and_serves_https_with_valid_certificate() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, b"rws tls ok");
+
+    // Verify that only the plaintext listener redirects, including POST and the
+    // native WebSocket route, and that the nonstandard HTTPS port is retained.
+    for path in ["/a%20b?x=1&next=%2F", "/_rws/ws"] {
+        let output = Command::new("curl")
+            .args([
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "5",
+                "--noproxy",
+                "*",
+                "--request",
+                "POST",
+                "--dump-header",
+                "-",
+                "--output",
+                "/dev/null",
+            ])
+            .arg(format!("http://localhost:{}{path}", addresses[0].port()))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let headers = String::from_utf8(output.stdout)
+            .unwrap()
+            .to_ascii_lowercase();
+        assert!(
+            headers.starts_with("HTTP/1.1 308".to_ascii_lowercase().as_str()),
+            "{headers}"
+        );
+        assert!(
+            headers.contains(
+                &format!(
+                    "location: https://localhost:{}{path}\r\n",
+                    addresses[1].port()
+                )
+                .to_ascii_lowercase()
+            ),
+            "{headers}"
+        );
+    }
+    let output = Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "5",
+            "--noproxy",
+            "*",
+        ])
+        .arg(format!(
+            "http://localhost:{}/.well-known/acme-challenge/Test_token-01",
+            addresses[0].port()
+        ))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"test-key-authorization");
 }

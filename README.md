@@ -287,6 +287,19 @@ sudo systemctl restart rws
 
 RWS does not issue certificates in this MVP. Use an external ACME client and ensure the `rws` service account can read the deployed key through an appropriately restricted group or copied file.
 
+When `[tls]` is configured, HTTP automatically returns **308 Permanent Redirect** to HTTPS,
+including the native WebSocket path. Redirects preserve the path, query and HTTP method and
+use the configured site's hostname and `server.https_listen` port (443 is omitted).
+Unknown hosts return 421. HTTPS itself is served normally; without `[tls]`, HTTP is unchanged.
+Set `redirect_http_to_https = false` in `[server]` to disable this behavior, for example when
+TLS is terminated by an external proxy. Forwarded headers do not override the redirect.
+
+For ACME HTTP-01 renewal, GET and HEAD for `/.well-known/acme-challenge/<token>` remain
+available over HTTP, where `<token>` contains only letters, digits, `-` and `_`.
+Use your static site's public root as the ACME client's webroot. These requests serve static
+files only: no PHP, front-controller fallback, directory listing or upstream proxy.
+Proxy sites return 404 for these challenges and need a separate certificate-validation method.
+
 ## Configuration
 
 Start with:

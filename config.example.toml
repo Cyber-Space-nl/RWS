@@ -1,6 +1,8 @@
 [server]
 listen = "0.0.0.0:8080"
 https_listen = "0.0.0.0:8443"
+# With [tls], redirect HTTP to HTTPS (308); ignored without TLS.
+redirect_http_to_https = true
 max_in_flight_requests = 1024
 listen_backlog = 1024
 max_body_bytes = 8388608

@@ -8,6 +8,9 @@ The workspace also includes `rws-ws-load` and `rws-bench`, which are test tools,
 
 At startup, RWS parses strict TOML configuration, validates sites and configured TLS files, builds
 the site map, cache and scheduler, and starts HTTP, optional HTTPS and a separate metrics listener.
+With TLS enabled, the HTTP router defaults to 308 HTTPS redirects before application or
+WebSocket handling. It uses configured site hosts, preserves path/query and allows only static
+GET/HEAD ACME HTTP-01 challenges over HTTP. HTTPS and the local metrics listener do not redirect.
 The public router accepts the configured native WebSocket path and dispatches other requests by
 normalized Host. An unknown host receives 421. Static sites resolve a file beneath their root,
 optionally dispatch `.php` requests or missing routes to PHP-FPM, and serve other files for GET or
