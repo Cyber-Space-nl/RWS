@@ -58,6 +58,20 @@ php_fpm = "unix:/run/php/php8.3-fpm.sock"
 # access_log = "/var/log/rws/example.test.access.log"
 # error_log = "/var/log/rws/example.test.error.log"
 
+# Optional separate application below this site's URL prefix. Basic auth requires [tls].
+# [[sites.locations]]
+# path = "/database/"
+# root = "/opt/phpmyadmin"
+# index = "index.php"
+# php = true
+# php_fpm = "unix:/run/php/phpmyadmin.sock"
+# noindex = true
+# deny_paths = ["/libraries", "/setup", "/vendor", "/templates", "/examples", "/doc", "/sql"]
+# deny_files = ["config*.php", "composer.json", "composer.lock", "package.json", "yarn.lock"]
+# [sites.locations.basic_auth]
+# realm = "Database administration"
+# htpasswd_file = "/etc/rws/private/phpmyadmin.htpasswd"
+
 # Optional HTTP reverse proxy site:
 # [[sites]]
 # host = "app.example.test"

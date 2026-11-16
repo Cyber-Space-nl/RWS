@@ -406,6 +406,52 @@ mode = "proxy"
 upstream = "http://127.0.0.1:3000"
 ```
 
+### Applications under a URL prefix
+
+A static/PHP site can mount another application with its own public root and PHP-FPM endpoint.
+For example, add this below the relevant `[[sites]]` entry (after installing a TLS certificate):
+
+```toml
+[[sites.locations]]
+path = "/database/"
+root = "/opt/phpmyadmin"
+index = "index.php"
+php = true
+php_fpm = "unix:/run/php/phpmyadmin.sock"
+noindex = true
+deny_paths = ["/libraries", "/setup", "/vendor", "/templates", "/examples", "/doc", "/sql"]
+deny_files = ["config*.php", "composer.json", "composer.lock", "package.json", "yarn.lock"]
+
+[sites.locations.basic_auth]
+realm = "Database administration"
+htpasswd_file = "/etc/rws/private/phpmyadmin.htpasswd"
+```
+
+Location prefixes must start and end with `/`, have distinct non-overlapping paths, and cannot
+overlap the native WebSocket or ACME path. Mount roots must also be separate from all other
+configured public roots, so another URL cannot bypass a mount's access rules.
+Matching uses decoded, normalized paths and complete
+path segments, so `/database/` does not match `/database2/`. The prefix is removed for filesystem
+lookup but retained in PHP's `SCRIPT_NAME` and `DOCUMENT_URI`; `REQUEST_URI` and the query remain
+intact. PHP receives the actual listener's HTTPS state and port. The bare `/database` redirects
+to `/database/`, preserving the query and method, after access checks.
+
+Mounted applications have separate static-cache namespaces. Hidden path components are always
+blocked and directory listings are disabled. `deny_paths` blocks mount-relative prefixes at
+segment boundaries; `deny_files` matches basenames in any component, with at most one `*`
+wildcard per pattern. These rules also apply to resolved symlink targets. Each mount has its own
+`index`, `php`, `php_fpm`, optional `front_controller` and `gzip` settings; they do not inherit
+the parent's PHP handler or front controller. Missing files stay within the mount.
+
+Basic authentication is optional but requires TLS. Create its file with `htpasswd -B`; only
+bcrypt `$2a$`, `$2b$` and `$2y$` hashes with costs 4–16 are accepted. Passwords are limited to
+72 bytes. Store the file outside public roots and make it readable by the RWS service account.
+Unsupported, invalid, empty or unreadable files fail startup/`--check`; restart RWS after changes.
+Checks run on a bounded blocking-worker queue. Authentication precedes cached responses, and
+protected responses use `Cache-Control: private, no-store`. The outer Authorization header is
+removed before PHP dispatch; `REMOTE_USER` and `AUTH_TYPE` carry the authenticated identity.
+The application's own login remains separate. `noindex` adds an `X-Robots-Tag` response header.
+
 ## WebSocket test
 
 Add `example.test` to DNS or `/etc/hosts`, then:

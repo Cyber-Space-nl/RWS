@@ -11,6 +11,11 @@ the site map, cache and scheduler, and starts HTTP, optional HTTPS and a separat
 With TLS enabled, the HTTP router defaults to 308 HTTPS redirects before application or
 WebSocket handling. It uses configured site hosts, preserves path/query and allows only static
 GET/HEAD ACME HTTP-01 challenges over HTTP. HTTPS and the local metrics listener do not redirect.
+Static/PHP sites can mount independent applications at non-overlapping URL prefixes. Decoded,
+normalized path matching happens before authentication and filesystem lookup. Mounts use separate
+cache IDs, roots and PHP handlers; access checks precede cache hits and also cover canonical file
+targets. Optional bcrypt htpasswd authentication requires TLS and uses bounded blocking workers.
+The real listener's transport state and the mount prefix are passed to PHP-FPM.
 The public router accepts the configured native WebSocket path and dispatches other requests by
 normalized Host. An unknown host receives 421. Static sites resolve a file beneath their root,
 optionally dispatch `.php` requests or missing routes to PHP-FPM, and serve other files for GET or

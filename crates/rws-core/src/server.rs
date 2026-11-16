@@ -1,5 +1,7 @@
 use crate::{
+    basic_auth::BasicAuth,
     config::{Config, SiteConfig, SiteMode},
+    location,
     metrics::Metrics,
     scheduler::{OutboundMessage, SchedulerHandle},
     site_log::{SiteLog, quoted, timestamp_millis},
@@ -43,7 +45,24 @@ struct Site {
     root: Option<PathBuf>,
     access_log: Option<SiteLog>,
     error_log: Option<SiteLog>,
+    locations: Vec<Site>,
+    prefix: String,
+    auth: Option<Arc<BasicAuth>>,
+    deny_paths: Vec<String>,
+    deny_files: Vec<String>,
+    noindex: bool,
 }
+
+#[derive(Clone, Copy, Default)]
+struct Transport {
+    https: bool,
+}
+
+#[derive(Clone)]
+struct MappedPath(String);
+
+#[derive(Clone)]
+struct AuthenticatedUser(String);
 
 #[derive(Clone)]
 struct AppState {
@@ -53,6 +72,7 @@ struct AppState {
     static_cache: Arc<StaticCache>,
     request_permits: Arc<Semaphore>,
     compression_permits: Arc<Semaphore>,
+    auth_permits: Arc<Semaphore>,
     scheduler: SchedulerHandle,
     proxy_client: Option<reqwest::Client>,
 }
@@ -74,6 +94,7 @@ pub async fn serve(config: Config) -> Result<()> {
         static_cache,
         request_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests)),
         compression_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(16))),
+        auth_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(4))),
         scheduler,
         proxy_client: build_proxy_client(&config)?,
     };
@@ -135,6 +156,7 @@ pub async fn serve(config: Config) -> Result<()> {
             .header_read_timeout(config.request_timeout());
         let server = server.serve(
             public_router(&config, state.clone())
+                .layer(axum::Extension(Transport { https: true }))
                 .into_make_service_with_connect_info::<std::net::SocketAddr>(),
         );
         info!(address = %config.server.https_listen, "HTTPS listener started");
@@ -206,17 +228,19 @@ fn public_router(config: &Config, state: AppState) -> Router {
 }
 
 fn http_router(config: &Config, state: AppState) -> Router {
-    if config.tls.is_some() && config.server.redirect_http_to_https {
+    let router = if config.tls.is_some() && config.server.redirect_http_to_https {
         // Include the native WebSocket path: plaintext upgrades must not bypass HTTPS.
         Router::new()
             .fallback(any(dispatch_https_redirect))
             .with_state(state)
     } else {
         public_router(config, state)
-    }
+    };
+    router.layer(axum::Extension(Transport { https: false }))
 }
 
 fn build_sites(config: &Config) -> Result<HashMap<String, Site>> {
+    let mut next_id = config.sites.len();
     config
         .sites
         .iter()
@@ -229,14 +253,58 @@ fn build_sites(config: &Config) -> Result<HashMap<String, Site>> {
                 .map(|path| path.canonicalize())
                 .transpose()
                 .with_context(|| format!("failed to canonicalize site root for {host}"))?;
+            let access_log = site.access_log.as_deref().map(SiteLog::start).transpose()?;
+            let error_log = site.error_log.as_deref().map(SiteLog::start).transpose()?;
+            let mut locations = Vec::new();
+            for location in &site.locations {
+                let mut mounted = site.clone();
+                mounted.locations.clear();
+                mounted.root = Some(location.root.clone());
+                mounted.index = location.index.clone();
+                mounted.php = location.php;
+                mounted.php_fpm = location.php_fpm.clone();
+                mounted.front_controller = location.front_controller.clone();
+                mounted.directory_listing = false;
+                mounted.gzip = location.gzip;
+                locations.push(Site {
+                    id: next_id,
+                    config: mounted,
+                    root: Some(
+                        location
+                            .root
+                            .canonicalize()
+                            .context("cannot resolve location root")?,
+                    ),
+                    access_log: None,
+                    error_log: error_log.clone(),
+                    locations: Vec::new(),
+                    prefix: location.path.trim_end_matches('/').to_owned(),
+                    auth: location
+                        .basic_auth
+                        .as_ref()
+                        .map(BasicAuth::load)
+                        .transpose()?
+                        .map(Arc::new),
+                    deny_paths: location.deny_paths.clone(),
+                    deny_files: location.deny_files.clone(),
+                    noindex: location.noindex,
+                });
+                next_id += 1;
+            }
             Ok((
                 host,
                 Site {
                     id,
                     config: site.clone(),
                     root,
-                    access_log: site.access_log.as_deref().map(SiteLog::start).transpose()?,
-                    error_log: site.error_log.as_deref().map(SiteLog::start).transpose()?,
+                    access_log,
+                    error_log,
+                    locations,
+                    prefix: String::new(),
+                    auth: None,
+                    deny_paths: Vec::new(),
+                    deny_files: Vec::new(),
+                    noindex: false,
                 },
             ))
         })
@@ -360,7 +428,7 @@ async fn dispatch_https_redirect(State(state): State<AppState>, request: Request
     dispatch(state, request, true).await
 }
 
-async fn dispatch(state: AppState, request: Request, redirect_https: bool) -> Response {
+async fn dispatch(state: AppState, mut request: Request, redirect_https: bool) -> Response {
     state
         .metrics
         .http_requests_total
@@ -379,7 +447,62 @@ async fn dispatch(state: AppState, request: Request, redirect_https: bool) -> Re
         https_redirect_or_challenge(&state, site, request).await
     } else {
         match site.config.mode {
-            SiteMode::Static => static_or_php(&state, site, request).await,
+            SiteMode::Static => {
+                if site.locations.is_empty() {
+                    static_or_php(&state, site, request).await
+                } else {
+                    match validated_request_path(request.uri().path()) {
+                        Err(status) => status.into_response(),
+                        Ok(path) => {
+                            let path = location::normalized_path(&path);
+                            let mounted = site
+                                .locations
+                                .iter()
+                                .find(|mounted| location::matches_prefix(&path, &mounted.prefix));
+                            if let Some(mounted) = mounted {
+                                let relative = path
+                                    .strip_prefix(&mounted.prefix)
+                                    .expect("matched prefix")
+                                    .to_owned();
+                                request.extensions_mut().insert(MappedPath(
+                                    if relative.is_empty() {
+                                        "/".to_owned()
+                                    } else {
+                                        relative
+                                    },
+                                ));
+                                let mut response = location_request(
+                                    &state,
+                                    mounted,
+                                    request,
+                                    path == mounted.prefix,
+                                )
+                                .await;
+                                if mounted.noindex {
+                                    response.headers_mut().insert(
+                                        "x-robots-tag",
+                                        HeaderValue::from_static("noindex, nofollow, noarchive"),
+                                    );
+                                }
+                                if mounted.auth.is_some() {
+                                    response.headers_mut().insert(
+                                        header::CACHE_CONTROL,
+                                        HeaderValue::from_static("private, no-store"),
+                                    );
+                                    response.headers_mut().append(
+                                        header::VARY,
+                                        HeaderValue::from_static("Authorization"),
+                                    );
+                                }
+                                response
+                            } else {
+                                request.extensions_mut().insert(MappedPath(path));
+                                static_or_php(&state, site, request).await
+                            }
+                        }
+                    }
+                }
+            }
             SiteMode::Proxy => match state.request_permits.try_acquire() {
                 Ok(_permit) => proxy_request(&state, site, request).await,
                 Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response(),
@@ -397,6 +520,80 @@ async fn dispatch(state: AppState, request: Request, redirect_https: bool) -> Re
         request_log.write(site, &response);
     }
     response
+}
+
+async fn location_request(
+    state: &AppState,
+    site: &Site,
+    mut request: Request,
+    needs_slash: bool,
+) -> Response {
+    let path = &request
+        .extensions()
+        .get::<MappedPath>()
+        .expect("mapped location")
+        .0;
+    if location::denied(path, &site.deny_paths, &site.deny_files) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Some(auth) = &site.auth {
+        if !request
+            .extensions()
+            .get::<Transport>()
+            .is_some_and(|transport| transport.https)
+        {
+            return (StatusCode::FORBIDDEN, "authentication requires HTTPS").into_response();
+        }
+        let Some((user, password)) = BasicAuth::credentials(request.headers()) else {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, auth.challenge.clone())],
+            )
+                .into_response();
+        };
+        let Ok(permit) = Arc::clone(&state.auth_permits).try_acquire_owned() else {
+            return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy").into_response();
+        };
+        let auth = Arc::clone(auth);
+        let verified = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            auth.verify(&user, &password).then_some(user)
+        })
+        .await;
+        match verified {
+            Ok(Some(user)) => {
+                request.headers_mut().remove(header::AUTHORIZATION);
+                request.extensions_mut().insert(AuthenticatedUser(user));
+            }
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [(
+                        header::WWW_AUTHENTICATE,
+                        site.auth
+                            .as_ref()
+                            .expect("auth configured")
+                            .challenge
+                            .clone(),
+                    )],
+                )
+                    .into_response();
+            }
+        }
+    }
+    if needs_slash {
+        let query = request
+            .uri()
+            .query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default();
+        return (
+            StatusCode::PERMANENT_REDIRECT,
+            [(header::LOCATION, format!("{}/{query}", site.prefix))],
+        )
+            .into_response();
+    }
+    static_or_php(state, site, request).await
 }
 
 async fn https_redirect_or_challenge(state: &AppState, site: &Site, request: Request) -> Response {
@@ -487,11 +684,14 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
     };
     let is_head = request.method() == Method::HEAD;
     let can_use_cache = matches!(*request.method(), Method::GET | Method::HEAD);
-    let request_path = match validated_request_path(request.uri().path()) {
-        Ok(path) => path,
-        Err(status) => {
-            return (status, status.canonical_reason().unwrap_or("error")).into_response();
-        }
+    let request_path = match request.extensions().get::<MappedPath>() {
+        Some(path) => Cow::Borrowed(path.0.as_str()),
+        None => match validated_request_path(request.uri().path()) {
+            Ok(path) => path,
+            Err(status) => {
+                return (status, status.canonical_reason().unwrap_or("error")).into_response();
+            }
+        },
     };
     if can_use_cache
         && let FastLookup::Hit(asset) = state.static_cache.fast_lookup(site.id, &request_path)
@@ -558,6 +758,21 @@ async fn static_or_php(state: &AppState, site: &Site, request: Request) -> Respo
             return (status, status.canonical_reason().unwrap_or("error")).into_response();
         }
     };
+    if !site.prefix.is_empty() {
+        let target_path = target
+            .path
+            .strip_prefix(root)
+            .expect("contained target")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if location::denied(
+            &format!("/{target_path}"),
+            &site.deny_paths,
+            &site.deny_files,
+        ) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
     if target.path.extension().and_then(|value| value.to_str()) == Some("php") {
         state.static_cache.invalidate(site.id, &request_path);
         if !site.config.php {
@@ -1584,6 +1799,19 @@ async fn php_request(
         .extensions()
         .get::<ConnectInfo<std::net::SocketAddr>>()
         .map(|ConnectInfo(address)| *address);
+    let https = request
+        .extensions()
+        .get::<Transport>()
+        .is_some_and(|transport| transport.https);
+    let address = if https {
+        state.config.server.https_listen
+    } else {
+        state.config.server.listen
+    };
+    let authenticated_user = request
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .map(|user| user.0.clone());
     let (parts, body) = request.into_parts();
     let body =
         match tokio::time::timeout(timeout, to_bytes(body, state.config.server.max_body_bytes))
@@ -1604,18 +1832,31 @@ async fn php_request(
             .to_owned();
         let script_name = script
             .strip_prefix(root)
-            .map(|path| format!("/{}", path.to_string_lossy().replace('\\', "/")))
+            .map(|path| {
+                format!(
+                    "{}/{}",
+                    site.prefix,
+                    path.to_string_lossy().replace('\\', "/")
+                )
+            })
             .map_err(|_| "PHP script is outside the site root".to_owned())?;
         let mut extras = Params::default()
             .document_root(root.to_string_lossy().into_owned())
             .script_filename(script.to_string_lossy().into_owned())
             .script_name(script_name.clone())
             .document_uri(script_name)
-            .server_addr(state.config.server.listen.ip().to_string())
-            .server_port(state.config.server.listen.port())
+            .server_addr(address.ip().to_string())
+            .server_port(address.port())
+            .custom("HTTPS", if https { "on" } else { "off" })
+            .custom("REQUEST_SCHEME", if https { "https" } else { "http" })
             .server_name(site.config.host.clone())
             .content_type(content_type)
             .content_length(body.len());
+        if let Some(user) = authenticated_user {
+            extras = extras
+                .custom("REMOTE_USER", user)
+                .custom("AUTH_TYPE", "Basic");
+        }
         if let Some(remote) = remote {
             extras = extras
                 .remote_addr(remote.ip().to_string())
@@ -2078,11 +2319,280 @@ mod tests {
             compression_permits: Arc::new(Semaphore::new(
                 config.server.max_in_flight_requests.min(16),
             )),
+            auth_permits: Arc::new(Semaphore::new(4)),
             scheduler: SchedulerHandle::start(config.websocket.clone(), Arc::clone(&metrics)),
             proxy_client: build_proxy_client(&config).unwrap(),
             config,
             metrics,
         }
+    }
+
+    #[tokio::test]
+    async fn mounted_app_requires_auth_before_cached_files_and_keeps_roots_separate() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let directory = tempdir().unwrap();
+        let public = directory.path().join("public");
+        let app_root = directory.path().join("application");
+        std::fs::create_dir_all(&public).unwrap();
+        std::fs::create_dir_all(&app_root).unwrap();
+        std::fs::write(public.join("index.html"), "main-site").unwrap();
+        std::fs::write(app_root.join("index.html"), "private-app").unwrap();
+        std::fs::write(app_root.join("style.css"), "private-style").unwrap();
+        let passwords = directory.path().join("users");
+        std::fs::write(
+            &passwords,
+            format!("alice:{}\n", bcrypt::hash("test-password", 4).unwrap()),
+        )
+        .unwrap();
+        let config: Config = toml::from_str(&format!(
+            "[static_cache]\nenabled=true\n[tls]\ncert_file='unused'\nkey_file='unused'\n[[sites]]\nhost='example.test'\nroot='{}'\n[[sites.locations]]\npath='/database/'\nroot='{}'\nnoindex=true\ndeny_paths=['/vendor','/setup']\ndeny_files=['config*.php','composer.json']\n[sites.locations.basic_auth]\nrealm='Private app'\nhtpasswd_file='{}'\n",
+            public.display(), app_root.display(), passwords.display()
+        )).unwrap();
+        let state = test_state(config.clone());
+        let app =
+            public_router(&config, state.clone()).layer(axum::Extension(Transport { https: true }));
+        for (path, credentials, status, body) in [
+            ("/", None, StatusCode::OK, "main-site"),
+            (
+                "/database/",
+                Some("alice:test-password"),
+                StatusCode::OK,
+                "private-app",
+            ),
+            ("/database/", None, StatusCode::UNAUTHORIZED, ""),
+            (
+                "/database/style.css",
+                Some("alice:test-password"),
+                StatusCode::OK,
+                "private-style",
+            ),
+            (
+                "/database/style.css",
+                Some("alice:wrong"),
+                StatusCode::UNAUTHORIZED,
+                "",
+            ),
+            ("/%64atabase/style.css", None, StatusCode::UNAUTHORIZED, ""),
+            ("//database/./style.css", None, StatusCode::UNAUTHORIZED, ""),
+            (
+                "/database/",
+                Some("unknown:test-password"),
+                StatusCode::UNAUTHORIZED,
+                "",
+            ),
+            ("/database2/", None, StatusCode::NOT_FOUND, "not found"),
+        ] {
+            let mut request = Request::builder()
+                .uri(path)
+                .header(header::HOST, "example.test");
+            if let Some(credentials) = credentials {
+                request = request.header(
+                    header::AUTHORIZATION,
+                    format!("Basic {}", STANDARD.encode(credentials)),
+                );
+            }
+            let response =
+                tower::ServiceExt::oneshot(app.clone(), request.body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            if status == StatusCode::UNAUTHORIZED {
+                assert_eq!(
+                    response.headers()[header::WWW_AUTHENTICATE],
+                    "Basic realm=\"Private app\", charset=\"UTF-8\""
+                );
+                assert_eq!(
+                    response.headers()[header::CACHE_CONTROL],
+                    "private, no-store"
+                );
+                assert!(response.headers().contains_key("x-robots-tag"));
+            }
+            assert_eq!(to_bytes(response.into_body(), 4096).await.unwrap(), body);
+        }
+        for path in [
+            "/database/config.inc.php",
+            "/database/vendor/lib.js",
+            "/database/./vendor/lib.js",
+            "/database//setup/",
+            "/database/%76endor/lib.js",
+            "/database%2fvendor/lib.js",
+            "/database/.hidden",
+            "/database/%2e%2e/config.php",
+        ] {
+            let request = Request::builder()
+                .uri(path)
+                .header(header::HOST, "example.test")
+                .body(Body::empty())
+                .unwrap();
+            let response = tower::ServiceExt::oneshot(app.clone(), request)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+        }
+        let request = Request::builder()
+            .uri("/database?x=1")
+            .header(header::HOST, "example.test")
+            .header(
+                header::AUTHORIZATION,
+                format!("Basic {}", STANDARD.encode("alice:test-password")),
+            )
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(response.headers()[header::LOCATION], "/database/?x=1");
+        let plain =
+            public_router(&config, state).layer(axum::Extension(Transport { https: false }));
+        let request = Request::builder()
+            .uri("/database/")
+            .header(header::HOST, "example.test")
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(plain, request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(!response.headers().contains_key(header::WWW_AUTHENTICATE));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn mounted_deny_rules_also_cover_symlink_targets() {
+        let directory = tempdir().unwrap();
+        let public = directory.path().join("public");
+        let mounted = directory.path().join("mounted");
+        std::fs::create_dir_all(&public).unwrap();
+        std::fs::create_dir_all(mounted.join("vendor")).unwrap();
+        std::fs::write(mounted.join("vendor/secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink("vendor/secret.txt", mounted.join("allowed.txt")).unwrap();
+        let config: Config = toml::from_str(&format!("[[sites]]\nhost='example.test'\nroot='{}'\n[[sites.locations]]\npath='/database/'\nroot='{}'\ndeny_paths=['/vendor']\n", public.display(), mounted.display())).unwrap();
+        let app = public_router(&config, test_state(config.clone()));
+        let request = Request::builder()
+            .uri("/database/allowed.txt")
+            .header(header::HOST, "example.test")
+            .body(Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn mounted_php_uses_its_own_pool_and_correct_url_and_tls_parameters() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        use tokio::io::AsyncWriteExt;
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("public");
+        let mounted = directory.path().join("mounted");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(mounted.join("nested")).unwrap();
+        std::fs::write(mounted.join("nested/index.php"), "<?php").unwrap();
+        let passwords = directory.path().join("users");
+        std::fs::write(
+            &passwords,
+            format!("alice:{}\n", bcrypt::hash("test-password", 4).unwrap()),
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let expected_root = mounted.canonicalize().unwrap();
+        let responder = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut encoded = Vec::new();
+            loop {
+                let mut header = [0u8; 8];
+                stream.read_exact(&mut header).await.unwrap();
+                let length = u16::from_be_bytes([header[4], header[5]]) as usize;
+                let mut body = vec![0; length + header[6] as usize];
+                stream.read_exact(&mut body).await.unwrap();
+                if header[1] == 4 {
+                    encoded.extend_from_slice(&body[..length]);
+                }
+                if header[1] == 5 && length == 0 {
+                    break;
+                }
+            }
+            fn length(bytes: &mut &[u8]) -> usize {
+                let first = bytes[0];
+                if first & 128 == 0 {
+                    *bytes = &bytes[1..];
+                    first as usize
+                } else {
+                    let value = u32::from_be_bytes(bytes[..4].try_into().unwrap()) & 0x7fff_ffff;
+                    *bytes = &bytes[4..];
+                    value as usize
+                }
+            }
+            let mut remaining = encoded.as_slice();
+            let mut params = HashMap::new();
+            while !remaining.is_empty() {
+                let name_len = length(&mut remaining);
+                let value_len = length(&mut remaining);
+                let name = String::from_utf8(remaining[..name_len].to_vec()).unwrap();
+                remaining = &remaining[name_len..];
+                let value = String::from_utf8(remaining[..value_len].to_vec()).unwrap();
+                remaining = &remaining[value_len..];
+                params.insert(name, value);
+            }
+            for (key, expected) in [
+                ("SCRIPT_NAME", "/database/nested/index.php"),
+                ("DOCUMENT_URI", "/database/nested/index.php"),
+                ("REQUEST_URI", "/database/nested/index.php?foo=bar"),
+                ("QUERY_STRING", "foo=bar"),
+                ("HTTPS", "on"),
+                ("REQUEST_SCHEME", "https"),
+                ("SERVER_PORT", "443"),
+                ("REMOTE_USER", "alice"),
+                ("AUTH_TYPE", "Basic"),
+                ("REQUEST_METHOD", "POST"),
+            ] {
+                assert_eq!(params.get(key).map(String::as_str), Some(expected), "{key}");
+            }
+            assert_eq!(params["DOCUMENT_ROOT"], expected_root.to_string_lossy());
+            assert_eq!(
+                params["SCRIPT_FILENAME"],
+                expected_root.join("nested/index.php").to_string_lossy()
+            );
+            assert!(!params.contains_key("HTTP_AUTHORIZATION"));
+            for (kind, body) in [
+                (6, b"Content-Type: text/plain\r\n\r\npma ok".as_slice()),
+                (6, &[]),
+                (3, &[0u8; 8]),
+            ] {
+                let length = body.len() as u16;
+                stream
+                    .write_all(&[1, kind, 0, 1, (length >> 8) as u8, length as u8, 0, 0])
+                    .await
+                    .unwrap();
+                stream.write_all(body).await.unwrap();
+            }
+        });
+        let config: Config = toml::from_str(&format!(
+            "[server]\nhttps_listen='127.0.0.1:443'\n[tls]\ncert_file='unused'\nkey_file='unused'\n[[sites]]\nhost='example.test'\nroot='{}'\nphp=true\nphp_fpm='tcp:127.0.0.1:1'\n[[sites.locations]]\npath='/database/'\nroot='{}'\nindex='index.php'\nphp=true\nphp_fpm='tcp:{address}'\n[sites.locations.basic_auth]\nrealm='Private'\nhtpasswd_file='{}'\n", root.display(), mounted.display(), passwords.display()
+        )).unwrap();
+        let app = public_router(&config, test_state(config.clone()))
+            .layer(axum::Extension(Transport { https: true }));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/database/nested/index.php?foo=bar")
+            .header(header::HOST, "example.test")
+            .header("x-forwarded-proto", "http")
+            .header(
+                header::AUTHORIZATION,
+                format!("Basic {}", STANDARD.encode("alice:test-password")),
+            )
+            .body(Body::from("form=value"))
+            .unwrap();
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            tower::ServiceExt::oneshot(app, request),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        responder.await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            to_bytes(response.into_body(), 4096).await.unwrap(),
+            "pma ok"
+        );
     }
 
     #[tokio::test]

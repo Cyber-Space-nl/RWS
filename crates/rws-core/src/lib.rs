@@ -1,5 +1,7 @@
+mod basic_auth;
 mod config;
 pub(crate) mod controller;
+mod location;
 mod metrics;
 mod scheduler;
 mod server;

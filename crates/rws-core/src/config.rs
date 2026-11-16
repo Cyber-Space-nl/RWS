@@ -183,6 +183,38 @@ pub struct SiteConfig {
     pub access_log: Option<PathBuf>,
     pub error_log: Option<PathBuf>,
     pub upstream: Option<String>,
+    #[serde(default)]
+    pub locations: Vec<LocationConfig>,
+}
+
+/// A separate static/PHP application mounted below a site URL prefix.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocationConfig {
+    pub path: String,
+    pub root: PathBuf,
+    #[serde(default = "default_index")]
+    pub index: String,
+    #[serde(default)]
+    pub php: bool,
+    pub php_fpm: Option<String>,
+    pub front_controller: Option<String>,
+    #[serde(default)]
+    pub gzip: bool,
+    #[serde(default)]
+    pub deny_paths: Vec<String>,
+    #[serde(default)]
+    pub deny_files: Vec<String>,
+    #[serde(default)]
+    pub noindex: bool,
+    pub basic_auth: Option<BasicAuthConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BasicAuthConfig {
+    pub realm: String,
+    pub htpasswd_file: PathBuf,
 }
 
 impl Config {
@@ -198,6 +230,42 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         if self.sites.is_empty() {
             bail!("at least one [[sites]] entry is required");
+        }
+        // A protected mount inside another public root could be reached through
+        // that root's URL without its authentication or deny rules.
+        let mut public_roots = Vec::new();
+        for (site_id, site) in self.sites.iter().enumerate() {
+            if site.mode == SiteMode::Static
+                && let Some(root) = &site.root
+            {
+                public_roots.push((
+                    site_id,
+                    None,
+                    root.canonicalize().context("cannot resolve site root")?,
+                ));
+            }
+            for (location_id, location) in site.locations.iter().enumerate() {
+                public_roots.push((
+                    site_id,
+                    Some(location_id),
+                    location
+                        .root
+                        .canonicalize()
+                        .context("cannot resolve location root")?,
+                ));
+            }
+        }
+        for (site_id, location_id, root) in &public_roots {
+            if location_id.is_some()
+                && public_roots
+                    .iter()
+                    .any(|(other_site, other_location, other)| {
+                        (site_id, location_id) != (other_site, other_location)
+                            && (root.starts_with(other) || other.starts_with(root))
+                    })
+            {
+                bail!("location roots must not overlap other configured public roots");
+            }
         }
         if self.server.max_in_flight_requests == 0
             || self.server.listen_backlog == 0
@@ -236,6 +304,96 @@ impl Config {
             }
             if !hosts.insert(host) {
                 bail!("duplicate site host '{}'", site.host);
+            }
+            let mut prefixes: Vec<&str> = Vec::new();
+            for location in &site.locations {
+                if site.mode != SiteMode::Static {
+                    bail!("locations require a static/PHP site");
+                }
+                let prefix = location.path.trim_end_matches('/');
+                if prefix.is_empty()
+                    || !location.path.starts_with('/')
+                    || !location.path.ends_with('/')
+                    || location.path.contains("//")
+                    || !location
+                        .path
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/-_.~".contains(&b))
+                    || location
+                        .path
+                        .split('/')
+                        .any(|part| matches!(part, "." | ".."))
+                {
+                    bail!("location path must be a canonical URL prefix such as '/database/'");
+                }
+                if prefixes.iter().any(|other| {
+                    crate::location::matches_prefix(prefix, other)
+                        || crate::location::matches_prefix(other, prefix)
+                }) {
+                    bail!("duplicate or overlapping location prefixes are not supported");
+                }
+                prefixes.push(prefix);
+                if crate::location::matches_prefix(&self.websocket.path, prefix)
+                    || crate::location::matches_prefix("/.well-known/acme-challenge", prefix)
+                    || crate::location::matches_prefix(prefix, "/.well-known/acme-challenge")
+                {
+                    bail!("location conflicts with the native WebSocket or ACME path");
+                }
+                if !location.root.is_absolute() || !location.root.is_dir() {
+                    bail!("location root must be an existing absolute directory");
+                }
+                if location.php && location.php_fpm.as_deref().is_none_or(str::is_empty) {
+                    bail!("PHP location requires its own php_fpm endpoint");
+                }
+                let index = Path::new(&location.index);
+                if location.index.is_empty()
+                    || index.components().count() != 1
+                    || !matches!(index.components().next(), Some(Component::Normal(_)))
+                {
+                    bail!("location index must be a single filename");
+                }
+                if let Some(front) = &location.front_controller
+                    && (!location.php
+                        || !crate::location::safe_relative_file(front)
+                        || !front.ends_with(".php")
+                        || !location.root.join(front).is_file())
+                {
+                    bail!("location front_controller must be an existing contained PHP script");
+                }
+                for path in &location.deny_paths {
+                    if !path.starts_with('/')
+                        || path.ends_with('/')
+                        || !crate::location::safe_relative_file(path.trim_start_matches('/'))
+                        || path.contains('%')
+                        || path.contains("//")
+                    {
+                        bail!("deny_paths entries must be relative URL prefixes such as '/vendor'");
+                    }
+                }
+                for pattern in &location.deny_files {
+                    if pattern.is_empty()
+                        || pattern.contains(['/', '\\', '\0'])
+                        || pattern.matches('*').count() > 1
+                    {
+                        bail!("deny_files entries are basenames with at most one '*' wildcard");
+                    }
+                }
+                if let Some(auth) = &location.basic_auth {
+                    if self.tls.is_none() {
+                        bail!("Basic authentication requires TLS");
+                    }
+                    let password_path = auth
+                        .htpasswd_file
+                        .canonicalize()
+                        .context("cannot resolve htpasswd file")?;
+                    if public_roots
+                        .iter()
+                        .any(|(_, _, root)| password_path.starts_with(root))
+                    {
+                        bail!("htpasswd file must be outside public roots");
+                    }
+                    crate::basic_auth::BasicAuth::load(auth)?;
+                }
             }
             match site.mode {
                 SiteMode::Static => {
@@ -352,6 +510,110 @@ mod tests {
         );
         let config: Config = toml::from_str(&text).unwrap();
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn validates_location_boundaries_and_rejects_ambiguous_or_unsafe_configuration() {
+        let dir = tempdir().unwrap();
+        let public = dir.path().join("public");
+        std::fs::create_dir(&public).unwrap();
+        let application = dir.path().join("application");
+        std::fs::create_dir(&application).unwrap();
+        let base = format!(
+            "[[sites]]\nhost='example.test'\nroot='{}'\n",
+            public.display()
+        );
+        let valid = format!(
+            "[[sites.locations]]\npath='/database/'\nroot='{}'\ndeny_paths=['/vendor']\ndeny_files=['config*.php']\n",
+            application.display()
+        );
+        let config: Config = toml::from_str(&format!("{base}{valid}")).unwrap();
+        config.validate().unwrap();
+        let mut overlapping = config.clone();
+        overlapping.sites[0].locations[0].root = public.clone();
+        assert!(overlapping.validate().is_err());
+        let another = dir.path().join("another");
+        std::fs::create_dir(&another).unwrap();
+        for prefix in [
+            "/",
+            "/database",
+            "/data//base/",
+            "/database/../",
+            "/data%62ase/",
+            "/_rws/",
+            "/.well-known/",
+        ] {
+            let text = format!(
+                "{base}[[sites.locations]]\npath='{prefix}'\nroot='{}'\n",
+                application.display()
+            );
+            assert!(
+                toml::from_str::<Config>(&text).unwrap().validate().is_err(),
+                "{prefix}"
+            );
+        }
+        for extra in [
+            "deny_paths=['/vendor/../config']",
+            "deny_files=['config**.php']",
+            "php=true",
+            "index='../index.php'",
+            "front_controller='../index.php'",
+        ] {
+            let text = format!(
+                "{base}[[sites.locations]]\npath='/database/'\nroot='{}'\n{extra}\n",
+                application.display()
+            );
+            assert!(
+                toml::from_str::<Config>(&text).unwrap().validate().is_err(),
+                "{extra}"
+            );
+        }
+        for prefix in ["/database/", "/database/nested/"] {
+            let text = format!(
+                "{base}{valid}[[sites.locations]]\npath='{prefix}'\nroot='{}'\n",
+                another.display()
+            );
+            assert!(toml::from_str::<Config>(&text).unwrap().validate().is_err());
+        }
+    }
+
+    #[test]
+    fn authenticated_mount_requires_tls_and_password_files_outside_every_public_root() {
+        let dir = tempdir().unwrap();
+        let public = dir.path().join("public");
+        let application = dir.path().join("application");
+        fs::create_dir(&public).unwrap();
+        fs::create_dir(&application).unwrap();
+        let users = dir.path().join("users");
+        fs::write(
+            &users,
+            format!("alice:{}\n", bcrypt::hash("password", 4).unwrap()),
+        )
+        .unwrap();
+        let cert = dir.path().join("cert");
+        fs::write(&cert, "placeholder").unwrap();
+        let text = format!(
+            "[tls]\ncert_file='{}'\nkey_file='{}'\n[[sites]]\nhost='example.test'\nroot='{}'\n[[sites.locations]]\npath='/database/'\nroot='{}'\n[sites.locations.basic_auth]\nrealm='Private'\nhtpasswd_file='{}'\n",
+            cert.display(),
+            cert.display(),
+            public.display(),
+            application.display(),
+            users.display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        config.validate().unwrap();
+        let mut invalid = config.clone();
+        invalid.tls = None;
+        assert!(invalid.validate().is_err());
+        let public_users = public.join("users");
+        fs::copy(&users, &public_users).unwrap();
+        let mut invalid = config;
+        invalid.sites[0].locations[0]
+            .basic_auth
+            .as_mut()
+            .unwrap()
+            .htpasswd_file = public_users;
+        assert!(invalid.validate().is_err());
     }
 
     #[test]

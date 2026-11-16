@@ -6,6 +6,9 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 ### Added
 
+- Static/PHP applications mounted under URL prefixes, with independent roots, PHP-FPM pools
+  and cache namespaces, optional bcrypt htpasswd authentication, path/file deny rules and noindex.
+- Correct mounted PHP script URLs and listener-derived HTTPS metadata.
 - Automatic HTTP-to-HTTPS 308 redirects when TLS is configured, with a configurable opt-out
   and a static-only ACME HTTP-01 exception for certificate renewal.
 
