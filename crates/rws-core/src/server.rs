@@ -1812,7 +1812,10 @@ async fn php_request(
         .extensions()
         .get::<AuthenticatedUser>()
         .map(|user| user.0.clone());
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
+    if combine_cookie_headers(&mut parts.headers).is_err() {
+        return (StatusCode::BAD_REQUEST, "invalid Cookie header").into_response();
+    }
     let body =
         match tokio::time::timeout(timeout, to_bytes(body, state.config.server.max_body_bytes))
             .await
@@ -1907,6 +1910,24 @@ async fn php_request(
             (StatusCode::GATEWAY_TIMEOUT, "PHP-FPM timeout").into_response()
         }
     }
+}
+
+fn combine_cookie_headers(headers: &mut HeaderMap) -> Result<(), http::header::InvalidHeaderValue> {
+    if headers.get_all(header::COOKIE).iter().count() < 2 {
+        return Ok(());
+    }
+    // RFC 9113 section 8.2.3: HTTP/2 may split Cookie into multiple fields.
+    // CGI has one HTTP_COOKIE parameter, so combine before the lossy conversion.
+    let joined = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .map(HeaderValue::as_bytes)
+        .collect::<Vec<_>>()
+        .join(&b"; "[..]);
+    let mut cookie = HeaderValue::from_bytes(&joined)?;
+    cookie.set_sensitive(true);
+    headers.insert(header::COOKIE, cookie);
+    Ok(())
 }
 
 async fn execute_fastcgi<S>(
@@ -2182,6 +2203,56 @@ fn counted_error(state: &AppState, status: StatusCode, message: &'static str) ->
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn fastcgi_conversion_preserves_absent_single_and_split_cookie_fields() {
+        for version in [http::Version::HTTP_11, http::Version::HTTP_2] {
+            for (cookies, expected) in [
+                (vec![], None),
+                (
+                    vec!["session=first; theme=dark"],
+                    Some("session=first; theme=dark"),
+                ),
+                (
+                    vec!["session=first", "theme=dark", "csrf=token"],
+                    Some("session=first; theme=dark; csrf=token"),
+                ),
+                (
+                    vec!["session=first", "session=second"],
+                    Some("session=first; session=second"),
+                ),
+            ] {
+                let mut request = http::Request::builder()
+                    .version(version)
+                    .uri("/admin/")
+                    .header(header::HOST, "example.test")
+                    .header("x-trace", "first")
+                    .header("x-trace", "second")
+                    .body(io::Cursor::new(Vec::<u8>::new()))
+                    .unwrap();
+                for cookie in cookies {
+                    request
+                        .headers_mut()
+                        .append(header::COOKIE, HeaderValue::from_static(cookie));
+                }
+                combine_cookie_headers(request.headers_mut()).unwrap();
+                assert_eq!(request.headers().get_all("x-trace").iter().count(), 2);
+                assert_eq!(
+                    request.headers().get_all(header::COOKIE).iter().count(),
+                    usize::from(expected.is_some())
+                );
+                let converted =
+                    FastCgiRequest::try_from_http_with(request, Params::default()).unwrap();
+                assert_eq!(
+                    converted
+                        .params()
+                        .get("HTTP_COOKIE")
+                        .map(|value| value.as_ref()),
+                    expected
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn proxy_limits_upstream_responses_and_strips_untrusted_headers() {
@@ -2542,6 +2613,10 @@ mod tests {
                 ("REMOTE_USER", "alice"),
                 ("AUTH_TYPE", "Basic"),
                 ("REQUEST_METHOD", "POST"),
+                (
+                    "HTTP_COOKIE",
+                    "insaider_admin=test-session; theme=dark; csrf=test-token",
+                ),
             ] {
                 assert_eq!(params.get(key).map(String::as_str), Some(expected), "{key}");
             }
@@ -2572,7 +2647,11 @@ mod tests {
         let request = Request::builder()
             .method(Method::POST)
             .uri("/database/nested/index.php?foo=bar")
+            .version(http::Version::HTTP_2)
             .header(header::HOST, "example.test")
+            .header(header::COOKIE, "insaider_admin=test-session")
+            .header(header::COOKIE, "theme=dark")
+            .header(header::COOKIE, "csrf=test-token")
             .header("x-forwarded-proto", "http")
             .header(
                 header::AUTHORIZATION,

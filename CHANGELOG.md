@@ -2,6 +2,13 @@
 
 Notable changes are recorded here. Dates are added when releases are published.
 
+## Unreleased
+
+### Fixed
+
+- Combine split Cookie fields with `; ` before FastCGI conversion so HTTP/2 requests retain
+  all cookies, including PHP session identifiers, in their original order.
+
 ## 0.1.0-beta.7 — 2026-11-16
 
 ### Added
