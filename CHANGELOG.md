@@ -4,6 +4,11 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 ## Unreleased
 
+### Fixed
+
+- Let short bursts of protected requests wait for a Basic Auth check in a bounded queue. This
+  avoids immediate 503 responses when a browser loads several protected assets in parallel.
+
 ## 0.1.0-beta.8 — 2026-11-16
 
 ### Added

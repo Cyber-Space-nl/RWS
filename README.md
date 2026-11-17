@@ -452,8 +452,11 @@ Basic authentication is optional but requires TLS. Create its file with `htpassw
 bcrypt `$2a$`, `$2b$` and `$2y$` hashes with costs 4–16 are accepted. Passwords are limited to
 72 bytes. Store the file outside public roots and make it readable by the RWS service account.
 Unsupported, invalid, empty or unreadable files fail startup/`--check`; restart RWS after changes.
-Checks run on a bounded blocking-worker queue. Authentication precedes cached responses, and
-protected responses use `Cache-Control: private, no-store`. The outer Authorization header is
+RWS runs at most four Basic Auth password checks concurrently, or fewer if
+`max_in_flight_requests` is lower. Up to 32 requests can wait across the server for at most two
+seconds. RWS returns `503 authentication busy` if the queue is full or the wait expires.
+Authentication precedes cached responses. Protected responses use `Cache-Control: private,
+no-store`. The outer Authorization header is
 removed before PHP dispatch; `REMOTE_USER` and `AUTH_TYPE` carry the authenticated identity.
 The application's own login remains separate. `noindex` adds an `X-Robots-Tag` response header.
 

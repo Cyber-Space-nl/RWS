@@ -38,6 +38,9 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{error, info, warn};
 
+const MAX_AUTH_WAITERS: usize = 32;
+const AUTH_QUEUE_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[derive(Clone)]
 struct Site {
     id: usize,
@@ -73,6 +76,7 @@ struct AppState {
     request_permits: Arc<Semaphore>,
     compression_permits: Arc<Semaphore>,
     auth_permits: Arc<Semaphore>,
+    auth_wait_slots: Arc<Semaphore>,
     scheduler: SchedulerHandle,
     proxy_client: Option<reqwest::Client>,
 }
@@ -95,6 +99,7 @@ pub async fn serve(config: Config) -> Result<()> {
         request_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests)),
         compression_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(16))),
         auth_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(4))),
+        auth_wait_slots: Arc::new(Semaphore::new(MAX_AUTH_WAITERS)),
         scheduler,
         proxy_client: build_proxy_client(&config)?,
     };
@@ -559,8 +564,24 @@ async fn location_request(
             )
                 .into_response();
         };
-        let Ok(permit) = Arc::clone(&state.auth_permits).try_acquire_owned() else {
-            return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy").into_response();
+        let permit = match Arc::clone(&state.auth_permits).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                let Ok(_wait_slot) = state.auth_wait_slots.try_acquire() else {
+                    return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
+                        .into_response();
+                };
+                let Ok(Ok(permit)) = tokio::time::timeout(
+                    AUTH_QUEUE_TIMEOUT,
+                    Arc::clone(&state.auth_permits).acquire_owned(),
+                )
+                .await
+                else {
+                    return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
+                        .into_response();
+                };
+                permit
+            }
         };
         let auth = Arc::clone(auth);
         let verified = tokio::task::spawn_blocking(move || {
@@ -2398,7 +2419,8 @@ mod tests {
             compression_permits: Arc::new(Semaphore::new(
                 config.server.max_in_flight_requests.min(16),
             )),
-            auth_permits: Arc::new(Semaphore::new(4)),
+            auth_permits: Arc::new(Semaphore::new(config.server.max_in_flight_requests.min(4))),
+            auth_wait_slots: Arc::new(Semaphore::new(MAX_AUTH_WAITERS)),
             scheduler: SchedulerHandle::start(config.websocket.clone(), Arc::clone(&metrics)),
             proxy_client: build_proxy_client(&config).unwrap(),
             config,
@@ -2488,6 +2510,42 @@ mod tests {
             }
             assert_eq!(to_bytes(response.into_body(), 4096).await.unwrap(), body);
         }
+
+        let request_asset = || {
+            tower::ServiceExt::oneshot(
+                app.clone(),
+                Request::builder()
+                    .uri("/database/style.css")
+                    .header(header::HOST, "example.test")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Basic {}", STANDARD.encode("alice:test-password")),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        };
+        let active = state.auth_permits.acquire_many(4).await.unwrap();
+        let other_waiters = state
+            .auth_wait_slots
+            .acquire_many((MAX_AUTH_WAITERS - 1) as u32)
+            .await
+            .unwrap();
+        let mut waiting = std::pin::pin!(request_asset());
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        assert_eq!(state.auth_wait_slots.available_permits(), 0);
+        let overflow = request_asset().await.unwrap();
+        assert_eq!(overflow.status(), StatusCode::SERVICE_UNAVAILABLE);
+        drop(other_waiters);
+        drop(active);
+        assert_eq!(waiting.await.unwrap().status(), StatusCode::OK);
+
+        let active = state.auth_permits.acquire_many(4).await.unwrap();
+        let expired = request_asset().await.unwrap();
+        assert_eq!(expired.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.auth_wait_slots.available_permits(), MAX_AUTH_WAITERS);
+        drop(active);
+
         for path in [
             "/database/config.inc.php",
             "/database/vendor/lib.js",
