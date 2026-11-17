@@ -25,6 +25,9 @@ server variants; existing installations require a manual migration and a tested 
 [insaider.nl](https://insaider.nl/) has been running on RWS since 16 November 2026, using native
 HTTPS, static-file serving and PHP-FPM. Automatic HTTP-to-HTTPS redirects and a protected
 phpMyAdmin application under `/database/` are in use there and included in beta.7.
+At the check on 17 November 2026 at 13:17 CET, the current RWS process had been running for
+approximately 19 hours without an automatic restart, and its health check was responding. This is
+an early production observation, not a long-term reliability guarantee.
 
 ## Local quickstart
 
