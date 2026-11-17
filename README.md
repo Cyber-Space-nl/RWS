@@ -13,7 +13,7 @@ or Apache.
 reverse proxying and adaptive WebSocket scheduling. Configure the features you need in one
 configuration file; `rws-bench` and `rws-ws-load` are separate testing tools, not server variants.
 
-The [v0.1.0-beta.8 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.8)
+The [v0.1.0-beta.9 prerelease](https://github.com/Cyber-Space-nl/RWS/releases/tag/v0.1.0-beta.9)
 provides experimental Linux x86-64 binaries and release notes. Visit
 [rws.cyber-space.nl](https://rws.cyber-space.nl/) for the project overview and benchmark reports.
 
@@ -92,7 +92,7 @@ See [Configuration](#configuration) for the size limits and other details.
 - Linux is the deployment target; Ubuntu 24.04 on WSL2 and Linux GitHub Actions runners have been
   used for builds and tests. Linux 5.6 or newer is required for contained static-file opening.
   Windows workspace tests are useful for development but Windows deployment is not established.
-- The beta.8 Linux x86-64 archive is built against the Ubuntu 22.04 glibc baseline. The older
+- The beta.9 Linux x86-64 archive is built against the Ubuntu 22.04 glibc baseline. The older
   beta.4 server binary does not start on Ubuntu 22.04 because it requires GLIBC 2.38. A clean
   Ubuntu 22.04 VM test passed with systemd and PHP 8.1 after changing the configured socket; the
   shipped unit's PHP 8.3 ordering and the other limits are described in the validation report.
