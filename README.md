@@ -453,15 +453,17 @@ bcrypt `$2a$`, `$2b$` and `$2y$` hashes with costs 4–16 are accepted. Password
 72 bytes. Store the file outside public roots and make it readable by the RWS service account.
 Unsupported, invalid, empty or unreadable files fail startup/`--check`; restart RWS after changes.
 RWS runs at most four Basic Auth password checks concurrently, or fewer if
-`max_in_flight_requests` is lower. Up to 32 requests can wait across the server for at most two
-seconds. RWS returns `503 authentication busy` if the queue is full or the wait expires.
+`max_in_flight_requests` is lower. Up to 32 distinct checks can wait across the server for at most
+two seconds. Concurrent requests with identical credentials share the same pending check.
+Each authentication configuration admits at most 128 pending requests, each bounded by
+`request_timeout_ms`. RWS returns `503 authentication busy` when a limit or deadline is reached.
 Successful credentials are reused for up to 60 seconds through an in-memory cache with at most
 256 entries per authentication configuration. The cache stores digests protected by a random
 per-instance secret. Every request checks its supplied credentials against the cache. Failed
 checks are not cached, and restarting RWS clears the cache.
-Authentication precedes cached responses. Protected responses use `Cache-Control: private,
-no-store`. The outer Authorization header is
-removed before PHP dispatch; `REMOTE_USER` and `AUTH_TYPE` carry the authenticated identity.
+Authentication precedes cached responses. Protected responses use
+`Cache-Control: private, no-store`. The outer Authorization header is removed before PHP
+dispatch; `REMOTE_USER` and `AUTH_TYPE` carry the authenticated identity.
 The application's own login remains separate. `noindex` adds an `X-Robots-Tag` response header.
 
 ## WebSocket test

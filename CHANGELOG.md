@@ -6,6 +6,8 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 ### Fixed
 
+- Share pending Basic Auth checks between concurrent requests with identical credentials,
+  including the first page load and requests arriving after a cached result expires.
 - Reuse successful Basic Auth checks for 60 seconds in a bounded credential cache, so protected
   assets can load without repeating bcrypt for every request.
 - Let short bursts of protected requests wait for a Basic Auth check in a bounded queue. This

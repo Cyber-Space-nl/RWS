@@ -564,41 +564,16 @@ async fn location_request(
             )
                 .into_response();
         };
-        let verified = if auth.is_verified(&user, &password) {
-            Ok(Some(user))
-        } else {
-            let permit = match Arc::clone(&state.auth_permits).try_acquire_owned() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    let Ok(_wait_slot) = state.auth_wait_slots.try_acquire() else {
-                        return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
-                            .into_response();
-                    };
-                    let Ok(Ok(permit)) = tokio::time::timeout(
-                        AUTH_QUEUE_TIMEOUT,
-                        Arc::clone(&state.auth_permits).acquire_owned(),
-                    )
-                    .await
-                    else {
-                        return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
-                            .into_response();
-                    };
-                    permit
-                }
-            };
-            let auth = Arc::clone(auth);
-            tokio::task::spawn_blocking(move || {
-                let _permit = permit;
-                auth.verify(&user, &password).then_some(user)
-            })
-            .await
-        };
+        let verified = verify_basic_auth(state, auth, &user, &password).await;
         match verified {
-            Ok(Some(user)) => {
+            Some(true) => {
                 request.headers_mut().remove(header::AUTHORIZATION);
                 request.extensions_mut().insert(AuthenticatedUser(user));
             }
-            _ => {
+            None => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy").into_response();
+            }
+            Some(false) => {
                 return (
                     StatusCode::UNAUTHORIZED,
                     [(
@@ -627,6 +602,50 @@ async fn location_request(
             .into_response();
     }
     static_or_php(state, site, request).await
+}
+
+async fn verify_basic_auth(
+    state: &AppState,
+    auth: &Arc<BasicAuth>,
+    user: &str,
+    password: &str,
+) -> Option<bool> {
+    if auth.is_verified(user, password) {
+        return Some(true);
+    }
+    let pending = auth.pending_check(user, password)?;
+    let verification = pending.result.get_or_init(|| async {
+        if auth.is_verified(user, password) {
+            return Some(true);
+        }
+        let permit = match Arc::clone(&state.auth_permits).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                let _wait_slot = state.auth_wait_slots.try_acquire().ok()?;
+                tokio::time::timeout(
+                    AUTH_QUEUE_TIMEOUT,
+                    Arc::clone(&state.auth_permits).acquire_owned(),
+                )
+                .await
+                .ok()?
+                .ok()?
+            }
+        };
+        let auth = Arc::clone(auth);
+        let user = user.to_owned();
+        let password = password.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            auth.verify(&user, &password)
+        })
+        .await
+        .ok()
+    });
+    tokio::time::timeout(state.config.request_timeout(), verification)
+        .await
+        .ok()
+        .copied()
+        .flatten()
 }
 
 async fn https_redirect_or_challenge(state: &AppState, site: &Site, request: Request) -> Response {
@@ -2447,7 +2466,7 @@ mod tests {
         std::fs::write(
             &passwords,
             format!(
-                "alice:{0}\nbob:{0}\n",
+                "alice:{0}\nbob:{0}\ncarol:{0}\n",
                 bcrypt::hash("test-password", 4).unwrap()
             ),
         )
@@ -2541,11 +2560,25 @@ mod tests {
         let mut waiting = std::pin::pin!(request_asset("bob:test-password"));
         assert!(futures_util::poll!(&mut waiting).is_pending());
         assert_eq!(state.auth_wait_slots.available_permits(), 0);
-        let overflow = request_asset("bob:test-password").await.unwrap();
+        let overflow = request_asset("bob:wrong").await.unwrap();
         assert_eq!(overflow.status(), StatusCode::SERVICE_UNAVAILABLE);
         drop(other_waiters);
         drop(active);
         assert_eq!(waiting.await.unwrap().status(), StatusCode::OK);
+
+        let active = state.auth_permits.acquire_many(4).await.unwrap();
+        let mut burst = std::pin::pin!(futures_util::future::join_all(
+            (0..80).map(|_| request_asset("carol:test-password"))
+        ));
+        assert!(futures_util::poll!(&mut burst).is_pending());
+        assert_eq!(
+            state.auth_wait_slots.available_permits(),
+            MAX_AUTH_WAITERS - 1
+        );
+        drop(active);
+        for response in burst.await {
+            assert_eq!(response.unwrap().status(), StatusCode::OK);
+        }
 
         let active = state.auth_permits.acquire_many(4).await.unwrap();
         let cached = request_asset("bob:test-password").await.unwrap();

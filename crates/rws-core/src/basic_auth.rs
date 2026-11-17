@@ -7,18 +7,29 @@ use std::{
     collections::HashMap,
     io::Read,
     str::FromStr,
-    sync::Mutex,
+    sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
+use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore};
 
 const VERIFIED_CACHE_CAPACITY: usize = 256;
 const VERIFIED_CACHE_TTL: Duration = Duration::from_secs(60);
+const MAX_PENDING_AUTH_REQUESTS: usize = 128;
+
+type SharedAuthResult = OnceCell<Option<bool>>;
+
+pub(crate) struct PendingAuth {
+    pub result: Arc<SharedAuthResult>,
+    _slot: OwnedSemaphorePermit,
+}
 
 pub(crate) struct BasicAuth {
     users: HashMap<String, String>,
     dummy: String,
     cache_secret: [u8; 32],
     verified: Mutex<HashMap<[u8; 32], Instant>>,
+    pending: Mutex<HashMap<[u8; 32], Weak<SharedAuthResult>>>,
+    pending_slots: Arc<Semaphore>,
     pub challenge: HeaderValue,
 }
 
@@ -87,6 +98,8 @@ impl BasicAuth {
             dummy,
             cache_secret,
             verified: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            pending_slots: Arc::new(Semaphore::new(MAX_PENDING_AUTH_REQUESTS)),
             challenge,
         })
     }
@@ -153,6 +166,28 @@ impl BasicAuth {
             .is_some_and(|expires| *expires > Instant::now())
     }
 
+    pub fn pending_check(&self, user: &str, password: &str) -> Option<PendingAuth> {
+        let slot = Arc::clone(&self.pending_slots).try_acquire_owned().ok()?;
+        let key = self.cache_key(user, password);
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pending.retain(|_, result| result.strong_count() > 0);
+        let result = pending
+            .get(&key)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| {
+                let result = Arc::new(OnceCell::new());
+                pending.insert(key, Arc::downgrade(&result));
+                result
+            });
+        Some(PendingAuth {
+            result,
+            _slot: slot,
+        })
+    }
+
     fn cache_key(&self, user: &str, password: &str) -> [u8; 32] {
         let mut digest = Sha256::new();
         digest.update(self.cache_secret);
@@ -167,6 +202,54 @@ impl BasicAuth {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn pending_checks_share_work_and_release_capacity_after_cancellation() {
+        let directory = tempdir().unwrap();
+        let file = directory.path().join("users");
+        std::fs::write(
+            &file,
+            format!("alice:{}\n", bcrypt::hash("password", 4).unwrap()),
+        )
+        .unwrap();
+        let auth = BasicAuth::load(&BasicAuthConfig {
+            realm: "Test".to_owned(),
+            htpasswd_file: file,
+        })
+        .unwrap();
+        let first = auth.pending_check("alice", "password").unwrap();
+        let following = auth.pending_check("alice", "password").unwrap();
+        assert!(Arc::ptr_eq(&first.result, &following.result));
+        let wrong = auth.pending_check("alice", "wrong").unwrap();
+        assert!(!Arc::ptr_eq(&first.result, &wrong.result));
+        {
+            let mut canceled = std::pin::pin!(first.result.get_or_init(std::future::pending));
+            assert!(futures_util::poll!(&mut canceled).is_pending());
+        }
+        assert_eq!(
+            *following.result.get_or_init(|| async { Some(true) }).await,
+            Some(true)
+        );
+        assert_eq!(
+            *wrong.result.get_or_init(|| async { Some(false) }).await,
+            Some(false)
+        );
+        drop((first, following, wrong));
+        let fresh = auth.pending_check("alice", "wrong").unwrap();
+        assert!(fresh.result.get().is_none());
+        drop(fresh);
+        let pending: Vec<_> = (0..MAX_PENDING_AUTH_REQUESTS)
+            .map(|n| auth.pending_check("alice", &n.to_string()).unwrap())
+            .collect();
+        assert!(auth.pending_check("alice", "overflow").is_none());
+        assert_eq!(
+            auth.pending.lock().unwrap().len(),
+            MAX_PENDING_AUTH_REQUESTS
+        );
+        drop(pending);
+        assert!(auth.pending_check("alice", "password").is_some());
+        assert!(auth.pending.lock().unwrap().len() <= 1);
+    }
 
     #[test]
     fn bcrypt_htpasswd_checks_credentials_and_rejects_unsupported_files() {
