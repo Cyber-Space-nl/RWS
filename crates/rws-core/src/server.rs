@@ -564,31 +564,35 @@ async fn location_request(
             )
                 .into_response();
         };
-        let permit = match Arc::clone(&state.auth_permits).try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                let Ok(_wait_slot) = state.auth_wait_slots.try_acquire() else {
-                    return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
-                        .into_response();
-                };
-                let Ok(Ok(permit)) = tokio::time::timeout(
-                    AUTH_QUEUE_TIMEOUT,
-                    Arc::clone(&state.auth_permits).acquire_owned(),
-                )
-                .await
-                else {
-                    return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
-                        .into_response();
-                };
-                permit
-            }
+        let verified = if auth.is_verified(&user, &password) {
+            Ok(Some(user))
+        } else {
+            let permit = match Arc::clone(&state.auth_permits).try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    let Ok(_wait_slot) = state.auth_wait_slots.try_acquire() else {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
+                            .into_response();
+                    };
+                    let Ok(Ok(permit)) = tokio::time::timeout(
+                        AUTH_QUEUE_TIMEOUT,
+                        Arc::clone(&state.auth_permits).acquire_owned(),
+                    )
+                    .await
+                    else {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "authentication busy")
+                            .into_response();
+                    };
+                    permit
+                }
+            };
+            let auth = Arc::clone(auth);
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                auth.verify(&user, &password).then_some(user)
+            })
+            .await
         };
-        let auth = Arc::clone(auth);
-        let verified = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            auth.verify(&user, &password).then_some(user)
-        })
-        .await;
         match verified {
             Ok(Some(user)) => {
                 request.headers_mut().remove(header::AUTHORIZATION);
@@ -2442,7 +2446,10 @@ mod tests {
         let passwords = directory.path().join("users");
         std::fs::write(
             &passwords,
-            format!("alice:{}\n", bcrypt::hash("test-password", 4).unwrap()),
+            format!(
+                "alice:{0}\nbob:{0}\n",
+                bcrypt::hash("test-password", 4).unwrap()
+            ),
         )
         .unwrap();
         let config: Config = toml::from_str(&format!(
@@ -2511,7 +2518,7 @@ mod tests {
             assert_eq!(to_bytes(response.into_body(), 4096).await.unwrap(), body);
         }
 
-        let request_asset = || {
+        let request_asset = |credentials: &str| {
             tower::ServiceExt::oneshot(
                 app.clone(),
                 Request::builder()
@@ -2519,7 +2526,7 @@ mod tests {
                     .header(header::HOST, "example.test")
                     .header(
                         header::AUTHORIZATION,
-                        format!("Basic {}", STANDARD.encode("alice:test-password")),
+                        format!("Basic {}", STANDARD.encode(credentials)),
                     )
                     .body(Body::empty())
                     .unwrap(),
@@ -2531,17 +2538,19 @@ mod tests {
             .acquire_many((MAX_AUTH_WAITERS - 1) as u32)
             .await
             .unwrap();
-        let mut waiting = std::pin::pin!(request_asset());
+        let mut waiting = std::pin::pin!(request_asset("bob:test-password"));
         assert!(futures_util::poll!(&mut waiting).is_pending());
         assert_eq!(state.auth_wait_slots.available_permits(), 0);
-        let overflow = request_asset().await.unwrap();
+        let overflow = request_asset("bob:test-password").await.unwrap();
         assert_eq!(overflow.status(), StatusCode::SERVICE_UNAVAILABLE);
         drop(other_waiters);
         drop(active);
         assert_eq!(waiting.await.unwrap().status(), StatusCode::OK);
 
         let active = state.auth_permits.acquire_many(4).await.unwrap();
-        let expired = request_asset().await.unwrap();
+        let cached = request_asset("bob:test-password").await.unwrap();
+        assert_eq!(cached.status(), StatusCode::OK);
+        let expired = request_asset("bob:wrong").await.unwrap();
         assert_eq!(expired.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(state.auth_wait_slots.available_permits(), MAX_AUTH_WAITERS);
         drop(active);

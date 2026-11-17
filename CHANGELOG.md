@@ -6,6 +6,8 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 ### Fixed
 
+- Reuse successful Basic Auth checks for 60 seconds in a bounded credential cache, so protected
+  assets can load without repeating bcrypt for every request.
 - Let short bursts of protected requests wait for a Basic Auth check in a bounded queue. This
   avoids immediate 503 responses when a browser loads several protected assets in parallel.
 

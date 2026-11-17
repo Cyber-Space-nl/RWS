@@ -2,11 +2,23 @@ use crate::config::BasicAuthConfig;
 use anyhow::{Context, Result, bail};
 use axum::http::{HeaderMap, HeaderValue, header};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use std::{collections::HashMap, io::Read, str::FromStr};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    io::Read,
+    str::FromStr,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+const VERIFIED_CACHE_CAPACITY: usize = 256;
+const VERIFIED_CACHE_TTL: Duration = Duration::from_secs(60);
 
 pub(crate) struct BasicAuth {
     users: HashMap<String, String>,
     dummy: String,
+    cache_secret: [u8; 32],
+    verified: Mutex<HashMap<[u8; 32], Instant>>,
     pub challenge: HeaderValue,
 }
 
@@ -65,9 +77,16 @@ impl BasicAuth {
             .next()
             .context("htpasswd file is empty")?
             .clone();
+        let mut cache_secret = [0; 32];
+        rustls::crypto::aws_lc_rs::default_provider()
+            .secure_random
+            .fill(&mut cache_secret)
+            .map_err(|_| anyhow::anyhow!("cannot initialize Basic Auth cache secret"))?;
         Ok(Self {
             users,
             dummy,
+            cache_secret,
+            verified: Mutex::new(HashMap::new()),
             challenge,
         })
     }
@@ -97,9 +116,50 @@ impl BasicAuth {
     }
 
     pub fn verify(&self, user: &str, password: &str) -> bool {
+        if self.is_verified(user, password) {
+            return true;
+        }
         let hash = self.users.get(user);
         let valid = bcrypt::verify(password, hash.unwrap_or(&self.dummy)).unwrap_or(false);
-        hash.is_some() && valid
+        if hash.is_none() || !valid {
+            return false;
+        }
+        let now = Instant::now();
+        let mut verified = self
+            .verified
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        verified.retain(|_, expires| *expires > now);
+        if verified.len() >= VERIFIED_CACHE_CAPACITY
+            && let Some(oldest) = verified
+                .iter()
+                .min_by_key(|(_, expires)| **expires)
+                .map(|(key, _)| *key)
+        {
+            verified.remove(&oldest);
+        }
+        verified.insert(self.cache_key(user, password), now + VERIFIED_CACHE_TTL);
+        true
+    }
+
+    pub fn is_verified(&self, user: &str, password: &str) -> bool {
+        let key = self.cache_key(user, password);
+        let verified = self
+            .verified
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        verified
+            .get(&key)
+            .is_some_and(|expires| *expires > Instant::now())
+    }
+
+    fn cache_key(&self, user: &str, password: &str) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        digest.update(self.cache_secret);
+        digest.update((user.len() as u64).to_be_bytes());
+        digest.update(user.as_bytes());
+        digest.update(password.as_bytes());
+        digest.finalize().into()
     }
 }
 
@@ -122,8 +182,31 @@ mod tests {
         };
         let auth = BasicAuth::load(&config).unwrap();
         assert!(auth.verify("alice", "correct:password"));
+        assert!(auth.is_verified("alice", "correct:password"));
+        assert!(!auth.is_verified("alice", "wrong"));
+        assert!(!auth.is_verified("unknown", "correct:password"));
+        let key = auth.cache_key("alice", "correct:password");
+        auth.verified.lock().unwrap().insert(key, Instant::now());
+        assert!(!auth.is_verified("alice", "correct:password"));
+        assert!(auth.verify("alice", "correct:password"));
+        assert!(auth.is_verified("alice", "correct:password"));
+        let fresh = BasicAuth::load(&config).unwrap();
+        assert!(!fresh.is_verified("alice", "correct:password"));
         assert!(!auth.verify("alice", "wrong"));
         assert!(!auth.verify("unknown", "correct:password"));
+        assert_eq!(auth.verified.lock().unwrap().len(), 1);
+        {
+            let mut verified = auth.verified.lock().unwrap();
+            for n in 0..VERIFIED_CACHE_CAPACITY {
+                verified.insert(
+                    auth.cache_key(&n.to_string(), "test"),
+                    Instant::now() + VERIFIED_CACHE_TTL,
+                );
+            }
+            verified.remove(&key);
+        }
+        assert!(auth.verify("alice", "correct:password"));
+        assert_eq!(auth.verified.lock().unwrap().len(), VERIFIED_CACHE_CAPACITY);
         for entry in [
             "",
             "alice:plain-text",

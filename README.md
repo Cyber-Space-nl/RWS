@@ -455,6 +455,10 @@ Unsupported, invalid, empty or unreadable files fail startup/`--check`; restart 
 RWS runs at most four Basic Auth password checks concurrently, or fewer if
 `max_in_flight_requests` is lower. Up to 32 requests can wait across the server for at most two
 seconds. RWS returns `503 authentication busy` if the queue is full or the wait expires.
+Successful credentials are reused for up to 60 seconds through an in-memory cache with at most
+256 entries per authentication configuration. The cache stores digests protected by a random
+per-instance secret. Every request checks its supplied credentials against the cache. Failed
+checks are not cached, and restarting RWS clears the cache.
 Authentication precedes cached responses. Protected responses use `Cache-Control: private,
 no-store`. The outer Authorization header is
 removed before PHP dispatch; `REMOTE_USER` and `AUTH_TYPE` carry the authenticated identity.
