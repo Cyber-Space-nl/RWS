@@ -29,6 +29,9 @@ At the check on 17 November 2026 at 13:17 CET, the current RWS process had been 
 approximately 19 hours without an automatic restart, and its health check was responding. This is
 an early production observation, not a long-term reliability guarantee.
 
+The [early live-use report](docs/validation/insaider-early-live-observations-2026-11.md) records
+separate November 2026 snapshots, including a brief 503 incident and its unresolved cause.
+
 ## Local quickstart
 
 On Linux with Rust 1.88 or newer, run the included loopback-only example without root privileges:
