@@ -4,6 +4,12 @@ Notable changes are recorded here. Dates are added when releases are published.
 
 ## Unreleased
 
+## 0.1.0-beta.10 — 2026-11-23
+
+### Security
+
+- Update `url` to 2.5.9 to address RUSTSEC-2026-0592; update `form_urlencoded` to 1.2.3.
+
 ## 0.1.0-beta.9 — 2026-11-17
 
 ### Fixed
